@@ -1,0 +1,26 @@
+# ===== Trade Master · 模拟交易 + AI 托管 依赖清单 =====
+# 引擎为独立包（engine/），依赖在其 pyproject.toml，安装：
+#   .venv/bin/pip install -e engine/
+# 引擎运行还需：DEEPSEEK_API_KEY（.env）+ WIND_API_KEY（~/.wind-aifinmarket/config 或 .env）
+
+# --- FastAPI 服务 ---
+fastapi
+uvicorn[standard]
+
+# --- 数据库（PostgreSQL）---
+sqlalchemy>=2.0
+psycopg[binary]>=3.1        # PostgreSQL 驱动（psycopg3）
+
+# --- HTTP / 通知 ---
+requests                     # 飞书/企微 webhook
+
+# --- 定时调度（托管执行器）---
+apscheduler>=3.10
+
+# --- 阿里云（短信 + OCR）---
+alibabacloud_dysmsapi20170525>=1.0.0   # 阿里云短信 SDK
+alibabacloud_ocr_api20210707>=1.0.0    # 阿里云通用文字识别 OCR SDK
+alibabacloud_tea_openapi>=0.3.0        # 阿里云 OpenAPI 基础依赖
+
+# --- LLM 结构化解析 ---
+# openai>=2.0.0              # DeepSeek 用 OpenAI 兼容端点（引擎内部已含 langchain-openai）

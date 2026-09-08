@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 本地数据 / 密钥
+data/
+.env
+*.sqlite
+*.sqlite3
+
+# macOS
+.DS_Store
+
+# 若后续独立成 git 仓库，保留需求稿（PDF）——属项目交付资料

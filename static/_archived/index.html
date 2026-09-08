@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade Master · 深度分析引擎</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2028; --panel2: #212a35; --border: #2e3947;
+    --text: #e6edf3; --muted: #8b98a5; --accent: #3b82f6; --green: #22c55e;
+    --red: #ef4444; --orange: #f59e0b; --amber: #facc15;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 20px 80px; }
+  header { text-align: center; padding: 20px 0 18px; }
+  header h1 { font-size: 24px; font-weight: 700; letter-spacing: 1px; }
+  header p { color: var(--muted); margin-top: 4px; font-size: 13px; }
+
+  /* ── 对话区 ── */
+  .chat { display: flex; flex-direction: column; gap: 10px; margin: 6px 0 14px; }
+  .msg { max-width: 86%; padding: 11px 14px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px; }
+  .msg.ai   { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg.err  { align-self: flex-start; background: #3a1418; border: 1px solid #7f1d1d; color: #fca5a5; border-bottom-left-radius: 3px; }
+  .msg.plan { align-self: flex-start; width: 86%; background: var(--panel); border: 1px solid var(--accent); border-bottom-left-radius: 3px; }
+  .plan-line { margin-bottom: 6px; }
+  .plan-line b { color: #fff; }
+  .plan-btns { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button { border: none; border-radius: 8px; padding: 9px 16px; font-size: 13px; cursor: pointer; font-weight: 600; transition: .15s; }
+  .btn-go   { background: var(--green); color: #052e16; }
+  .btn-go:hover { filter: brightness(1.1); }
+  .btn-again { background: var(--panel2); color: var(--text); border: 1px solid var(--border); }
+  .btn-again:hover { border-color: var(--muted); }
+  .btn-go:disabled, .btn-again:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* ── 输入框 ── */
+  .composer { display: flex; gap: 10px; position: sticky; bottom: 14px; z-index: 5; }
+  .composer input {
+    flex: 1; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 12px; padding: 13px 16px; font-size: 14px; outline: none;
+  }
+  .composer input:focus { border-color: var(--accent); }
+  .composer button { background: var(--accent); color: #fff; padding: 13px 22px; border-radius: 12px; }
+  .composer button:disabled { opacity: .5; cursor: not-allowed; }
+  .composer input:disabled { opacity: .6; }
+
+  .sugg { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 2px 8px; }
+  .sugg button { background: var(--panel); color: var(--muted); border: 1px dashed var(--border); font-weight: 400; font-size: 12.5px; }
+  .sugg button:hover { color: var(--text); border-color: var(--accent); }
+
+  /* ── 结果区（沿用） ── */
+  .divider { text-align: center; color: var(--muted); font-size: 12px; margin: 26px 0 4px; letter-spacing: 3px; }
+  .decision-card { margin-top: 14px; background: linear-gradient(135deg, #1a2028, #1e2a3a); border: 1px solid var(--border); border-radius: 14px; padding: 22px; display: none; }
+  .decision-card.show { display: block; }
+  .decision-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .badge { font-size: 22px; font-weight: 800; padding: 10px 22px; border-radius: 12px; letter-spacing: 2px; }
+  .badge.buy { background: #14532d; color: #4ade80; }
+  .badge.overweight { background: #1e3a5f; color: #60a5fa; }
+  .badge.hold { background: #4a3205; color: #fbbf24; }
+  .badge.underweight { background: #7f1d1d; color: #f87171; }
+  .badge.sell { background: #450a0a; color: #fca5a5; }
+  .badge.review { background: #1f2937; color: #9ca3af; }
+  .decision-meta { color: var(--muted); font-size: 13px; }
+  .decision-meta b { color: var(--text); }
+
+  .pipeline { margin-top: 22px; display: none; }
+  .pipeline.show { display: block; }
+  .pipeline h2, .report h2 { font-size: 16px; margin-bottom: 12px; color: var(--muted); font-weight: 600; }
+  .stages { display: flex; gap: 8px; flex-wrap: wrap; }
+  .stage { flex: 1 1 90px; text-align: center; padding: 12px 8px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+  .stage.done { border-color: var(--green); color: var(--green); }
+
+  .report { margin-top: 26px; display: none; }
+  .report.show { display: block; }
+  .group-title { margin: 18px 0 8px; font-size: 13px; color: var(--accent); font-weight: 700; letter-spacing: 1px; }
+  .section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 10px; overflow: hidden; }
+  .section > summary { cursor: pointer; padding: 14px 18px; font-weight: 600; font-size: 14px; list-style: none; display: flex; justify-content: space-between; align-items: center; }
+  .section > summary:hover { background: var(--panel2); }
+  .section > summary::after { content: "▾"; color: var(--muted); transition: .2s; }
+  .section[open] > summary::after { transform: rotate(180deg); }
+  .section .body { padding: 4px 18px 18px; border-top: 1px solid var(--border); }
+  .section .body.empty { color: var(--muted); font-style: italic; }
+
+  .markdown { font-size: 14px; }
+  .markdown h1,.markdown h2,.markdown h3 { margin: 12px 0 6px; font-size: 15px; }
+  .markdown p { margin: 6px 0; }
+  .markdown ul,.markdown ol { margin: 6px 0 6px 20px; }
+  .markdown table { border-collapse: collapse; margin: 10px 0; width: 100%; font-size: 12.5px; }
+  .markdown th,.markdown td { border: 1px solid var(--border); padding: 6px 9px; text-align: left; }
+  .markdown th { background: var(--panel2); }
+  .markdown code { background: var(--panel2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .markdown strong { color: #fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Trade Master · 深度分析引擎</h1>
+    <p>一句话说出需求 → 多智能体 A股分析 · Wind 数据 · DeepSeek 驱动</p>
+  </header>
+
+  <div class="chat" id="chat"></div>
+
+  <div class="composer">
+    <input id="msg" autocomplete="off" placeholder="输入需求，例如：帮我分析一下今天 159779 这支基金的市场情况，并给出投资建议"
+           onkeydown="if(event.key==='Enter') send()">
+    <button id="sendBtn" onclick="send()">发送</button>
+  </div>
+  <div class="sugg">
+    <button onclick="fill('帮我分析一下今天 159779 这支基金的市场情况，并给出投资建议')">🎯 分析今天 159779</button>
+    <button onclick="fill('分析贵州茅台今天的行情和基本面，给出买卖建议')">🥃 分析贵州茅台</button>
+    <button onclick="loadDemo()">📄 先看演示报告</button>
+  </div>
+
+  <div class="decision-card" id="decisionCard">
+    <div class="decision-head">
+      <span class="badge" id="badge">—</span>
+      <div class="decision-meta">
+        标的：<b id="metaTicker">—</b>　分析日期：<b id="metaDate">—</b>
+      </div>
+    </div>
+  </div>
+
+  <div class="pipeline" id="pipeline">
+    <h2>多智能体流水线</h2>
+    <div class="stages" id="stages"></div>
+  </div>
+
+  <div class="report" id="report">
+    <h2>完整分析报告</h2>
+    <div id="reportBody"></div>
+  </div>
+</div>
+
+<script>
+const SECTIONS = [
+  { key: 'market',        title: '📈 市场分析', group: '一、分析师团队' },
+  { key: 'sentiment',     title: '💬 情绪分析', group: '一、分析师团队' },
+  { key: 'news',          title: '📰 新闻分析', group: '一、分析师团队' },
+  { key: 'fundamentals',  title: '📊 基本面分析', group: '一、分析师团队' },
+  { key: 'bull',          title: '🐂 牛方研究员', group: '二、研究辩论' },
+  { key: 'bear',          title: '🐻 熊方研究员', group: '二、研究辩论' },
+  { key: 'research_manager', title: '🎯 研究经理决策', group: '二、研究辩论' },
+  { key: 'trader',        title: '💰 交易员提案', group: '三、交易' },
+  { key: 'aggressive',    title: '🔥 激进风控', group: '四、风险辩论' },
+  { key: 'conservative',  title: '🛡️ 保守风控', group: '四、风险辩论' },
+  { key: 'neutral',       title: '⚖️ 中性风控', group: '四、风险辩论' },
+  { key: 'portfolio_manager', title: '🏛️ Portfolio Manager 终裁', group: '五、最终决策' },
+];
+const PIPELINE = ['分析师团队', '研究辩论', '交易员', '风险辩论', 'Portfolio Manager'];
+const RATING_CLASS = { '买入':'buy','增持':'overweight','持有':'hold','减持':'underweight','卖出':'sell' };
+
+const $ = id => document.getElementById(id);
+const chatEl = $('chat');
+let history = [];       // 发给 /chat 的多轮历史
+let pendingPlan = null; // 待用户确认的执行计划
+let busy = false;
+
+function escapeHtml(s) { return s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+function md(text) {
+  if (!text) return '<span class="muted">（无内容）</span>';
+  try { return marked.parse(text); } catch (e) { return '<pre>' + escapeHtml(text) + '</pre>'; }
+}
+
+function addMsg(kind, text) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + kind;
+  if (kind === 'plan') el.innerHTML = text;
+  else el.innerHTML = kind === 'user' ? escapeHtml(text) : md(text);
+  chatEl.appendChild(el);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return el;
+}
+
+function fill(t) { $('msg').value = t; $('msg').focus(); }
+
+function setBusy(b) {
+  busy = b;
+  $('msg').disabled = b;
+  $('sendBtn').disabled = b;
+}
+
+async function errDetail(r) {
+  try { const j = await r.json(); return (j && j.detail) ? j.detail : ('HTTP ' + r.status); }
+  catch (e) { return 'HTTP ' + r.status; }
+}
+
+async function send() {
+  const input = $('msg');
+  const text = input.value.trim();
+  if (!text || busy) return;
+  input.value = '';
+  pendingPlan = null;
+  addMsg('user', text);
+  history.push({ role: 'user', content: text });
+  setBusy(true);
+  const thinking = addMsg('ai', '正在理解你的需求…');
+
+  try {
+    const r = await fetch('/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: history }),
+    });
+    if (!r.ok) { throw new Error(await errDetail(r)); }
+    const res = await r.json();
+    thinking.remove();
+
+    if (res.type === 'ask') {
+      addMsg('ai', res.question);
+      history.push({ role: 'assistant', content: res.question });
+    } else if (res.type === 'plan') {
+      pendingPlan = res;
+      renderPlan(res);
+    } else {
+      addMsg('err', '未知返回：' + JSON.stringify(res));
+    }
+  } catch (e) {
+    thinking.remove();
+    addMsg('err', '调用失败：' + e.message);
+  } finally {
+    setBusy(false);
+    $('msg').focus();
+  }
+}
+
+function renderPlan(p) {
+  const el = addMsg('plan',
+    `<div class="plan-line">📋 已解析：分析 <b>${escapeHtml(p.name)}</b>（${escapeHtml(p.ticker)} · ${escapeHtml(p.market || '未知市场')}），
+     日期 <b>${escapeHtml(p.date)}</b></div>
+     <div style="color:var(--muted)">${escapeHtml(p.summary || '')}</div>
+     <div class="plan-btns">
+       <button class="btn-go" onclick="runPlan()">✅ 开始分析（约 10-15 分钟）</button>
+       <button class="btn-again" onclick="replan()">↩️ 不是这个，重新说</button>
+     </div>`);
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+function replan() {
+  pendingPlan = null;
+  const t = addMsg('ai', '好的，换个标的/日期/市场重说一遍就行。');
+  history.push({ role: 'assistant', content: '好的，换个标的/日期/市场重说一遍就行。' });
+  $('msg').focus();
+}
+
+async function runPlan() {
+  if (!pendingPlan || busy) return;
+  const p = pendingPlan;
+  pendingPlan = null;
+  setBusy(true);
+  const wait = addMsg('ai', `⏳ 正在分析 ${escapeHtml(p.name)}（${escapeHtml(p.ticker)}）@ ${escapeHtml(p.date)}……\n多智能体流水线（分析师→牛熊辩论→交易员→风控→终裁）约需 10-15 分钟，跑完自动展示，请勿关闭页面。`);
+  const t0 = Date.now();
+  try {
+    const r = await fetch('/analysis', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker: p.ticker, date: p.date }),
+    });
+    if (!r.ok) {
+      const d = await errDetail(r);
+      wait.remove();
+      addMsg('err', '❌ 分析失败：' + d + '\n\n可以换个标的/日期再试。');
+      return;
+    }
+    const data = await r.json();
+    wait.remove();
+    renderResult(data);
+    const mins = Math.round((Date.now() - t0) / 60000);
+    const zh = data.decision_zh || data.decision || '';
+    addMsg('ai', `✅ 分析完成（约 ${mins} 分钟）：决策 **${zh}**，完整报告见下方。`);
+    history.push({ role: 'assistant', content: `分析完成，${p.name} 决策为 ${zh}。` });
+  } catch (e) {
+    wait.remove();
+    addMsg('err', '❌ 分析失败：' + e.message);
+  } finally {
+    setBusy(false);
+    $('msg').focus();
+  }
+}
+
+function renderResult(result) {
+  $('decisionCard').classList.add('show');
+  const zh = result.decision_zh || result.decision || '—';
+  const badge = $('badge');
+  badge.textContent = zh;
+  badge.className = 'badge ' + (RATING_CLASS[zh] || 'review');
+  $('metaTicker').textContent = result.ticker || '—';
+  $('metaDate').textContent = result.date || '—';
+
+  $('pipeline').classList.add('show');
+  $('stages').innerHTML = PIPELINE.map(s => `<div class="stage done">${s}</div>`).join('');
+
+  $('report').classList.add('show');
+  const rep = result.report || {};
+  let html = '';
+  let lastGroup = '';
+  for (const s of SECTIONS) {
+    if (s.group !== lastGroup) { html += `<div class="group-title">${s.group}</div>`; lastGroup = s.group; }
+    const content = rep[s.key] || '';
+    html += `<details class="section"><summary>${s.title}</summary><div class="body markdown">${md(content)}</div></details>`;
+  }
+  $('reportBody').innerHTML = html;
+  document.querySelector('.divider')?.remove();
+}
+
+async function loadDemo() {
+  if (busy) return;
+  setBusy(true);
+  const t = addMsg('ai', '加载演示数据…');
+  try {
+    const r = await fetch('/analysis/demo');
+    if (!r.ok) throw new Error(await errDetail(r));
+    const data = await r.json();
+    t.remove();
+    renderResult(data);
+    addMsg('ai', '📄 这是预生成的演示报告（贵州茅台 600519.SS）。');
+  } catch (e) {
+    t.remove();
+    addMsg('err', '演示数据加载失败：' + e.message);
+  } finally { setBusy(false); }
+}
+
+// 首次进入给个引导气泡
+addMsg('ai', '👋 直接在下方输入你的需求即可，例如：\n\n> 帮我分析一下今天 159779 这支基金的市场情况，并给出投资建议\n\n支持**多轮追问**：如果标的不明确，我会先向你确认市场/代码再执行。');
+</script>
+</body>
+</html>
