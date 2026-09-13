@@ -8,6 +8,7 @@ import yfinance as yf
 from stockstats import wrap
 from yfinance.exceptions import YFRateLimitError
 
+from ..asof import current_asof
 from .config import get_config
 from .symbol_utils import NoMarketDataError, normalize_symbol
 from .utils import safe_ticker_component
@@ -206,10 +207,18 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     # the curr_date filter below.
     end_str = (today_date + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
 
+    # 复权口径必须进缓存文件名。同一只票、同一窗口，实时走 Wind 默认（前复权）而回测走
+    # 后复权，价格差一个常数因子；共用一个文件会**静默**互相污染——比报错难查得多。
+    #
+    # 后复权序列本身对缓存是安全的：它的复权因子只依赖 t 之前的除权事件，所以"今天取的
+    # 后复权序列"与"半年前取的后复权序列"在重叠区间上完全相同。前复权则不然——
+    # 那正是它在回测里不能用（偷看未来）的原因。
+    adj_tag = "hfq" if current_asof() else "raw"
+
     os.makedirs(config["data_cache_dir"], exist_ok=True)
     data_file = os.path.join(
         config["data_cache_dir"],
-        f"{safe_symbol}-Wind-data-{start_str}-{end_str}.csv",
+        f"{safe_symbol}-Wind-data-{start_str}-{end_str}-{adj_tag}.csv",
     )
 
     # A cached file may be empty if a prior fetch failed (unknown symbol,
@@ -230,6 +239,7 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     if data is None:
         from .wind import get_wind_ohlcv
 
+        # 后复权由 get_wind_ohlcv 从 as-of 作用域里取到（回测默认 aftype=1，实时不带）。
         downloaded = get_wind_ohlcv(symbol, start_str, end_str)
         downloaded = downloaded.reset_index(drop=True)
         # Only cache real data — never persist an empty frame.

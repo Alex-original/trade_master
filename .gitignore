@@ -10,9 +10,22 @@ venv/
 
 # 本地数据 / 密钥
 data/
+# ``.env`` 那一行只挡精确名——而"改配置前先备份"是默认动作，会生成
+# ``.env.bak.1789124130`` / ``.env.production`` 这类**装着真 key 却不在忽略名单里**的文件，
+# 一个 ``git add -A`` 就上了公开仓库。所以这里必须连整族一起挡。
+# 例外：``*.example`` 是给人看的模板（``.env.example`` / ``deploy/.env.production.example``），
+# 里面只有 ``sk-xxxx`` 这类占位符，要留在版本库里——否则新克隆的人连该填哪些变量都不知道。
 .env
+.env.*
+!*.example
 *.sqlite
 *.sqlite3
+
+# 某个跑 Chrome 的脚本 ``--user-data-dir=`` 后面的路径没加引号，被 shell 拆开，
+# 在仓库根下留了个名字就叫 ``profile: ``（结尾带空格）的目录，里面塞着 4.4MB 的
+# 浏览器 profile（含 Session Storage）。名字再怪也是个能 ``git add -A`` 进公开仓库的真东西，
+# 所以按前缀挡掉——用 ``profile:*`` 而不是写死那个结尾空格，免得下次拆成别的样子又漏。
+profile:*
 
 # macOS
 .DS_Store

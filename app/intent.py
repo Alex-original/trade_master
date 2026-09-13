@@ -29,13 +29,13 @@ DEEPSEEK_BASE = "https://api.deepseek.com/chat/completions"
 def _llm_json(system: str, history: list[dict], max_tokens: int = 8000) -> dict:
     """调 DeepSeek 并要求只输出一个 JSON 对象（用于意图拆解，轻量）。
 
-    注意 max_tokens 必须给足：deepseek-v4-flash 也会消耗 hidden reasoning_tokens，
+    注意 max_tokens 必须给足：deepseek-flash 也会消耗 hidden reasoning_tokens，
     预算太小（曾用 1200）时模型"思考"就把额度用光，可见 content 为空串 → 解析必失败。
     """
     api_key = os.getenv("DEEPSEEK_API_KEY")
     if not api_key:
         raise RuntimeError("未找到 DEEPSEEK_API_KEY")
-    model = os.getenv("DEEPSEEK_QUICK_MODEL", "deepseek-v4-flash")
+    model = os.getenv("DEEPSEEK_QUICK_MODEL", "deepseek-flash")
     body = {
         "model": model,
         "messages": [{"role": "system", "content": system}, *history],
@@ -80,12 +80,13 @@ def _today_token() -> str:
     return _NOW.strftime("%Y-%m-%d")
 
 
-_SYSTEM_INTENT = f"""你是 A股深度分析的意图路由器。用户的输入是一条自然语言需求（可能有多轮对话历史），
-你需要判断它是不是"对某一只证券做深度分析（行情+新闻+基本面+投资建议）"，并把它拆成结构化 JSON。
+_SYSTEM_INTENT = f"""你是 A股/港股/美股 交易助手的意图路由器。用户的输入是一条自然语言需求（可能有多轮对话历史），
+你需要判断它属于三类中的哪一类：查某只证券的实时行情、对某只证券做深度分析（行情+新闻+基本面+投资建议）、
+还是其它（账户/持仓/策略/托管/闲聊）。然后拆成结构化 JSON。
 
 只输出一个 JSON 对象，不要输出任何其它文字。字段如下：
 {{
-  "mode": "analyze" | "ask",
+  "mode": "analyze" | "quote" | "ask",
   "ticker": "6位数字代码，或带后缀代码(如 0700.HK / AAPL)；没给代码就填空串",
   "name": "公司/基金/ETF名称（中文）；没给名称也填空串",
   "market": "A股 | 港股 | 美股 | 北交所 | \"\"",
@@ -95,17 +96,22 @@ _SYSTEM_INTENT = f"""你是 A股深度分析的意图路由器。用户的输入
 }}
 
 规则：
-1. 用户想分析某只具体证券（给 6 位代码、或公司/基金名，要求行情/建议/投资分析/基本面）→ mode=analyze。
-   用户没指明具体标的（如"帮我分析今天涨幅最大的股票"）、或意图与"单只证券深度分析"无关 → mode=ask，
-   question 里问清"要分析哪一只/什么需求"。
+1. mode 判断：
+   - 只查行情快照（问"股价/现价/最新价/多少钱/涨了还是跌了/今日涨跌/市盈率/成交量"等，未要求展开分析、建议或报告）
+     → mode=quote。注意：即使措辞是"查询/查一下/看看 X 的行情/价格"，只要核心是报价就是 quote。
+   - 要求对某只具体证券做分析/调研/报告/投资建议/基本面/市场研判（如"分析一下 X 的市场/走势/前景"、
+     "帮我写一份 X 的调研报告/深度分析"）→ mode=analyze。
+   - 用户没指明具体标的（如"帮我分析今天涨幅最大的股票"）、或意图与上面两类无关（账户/持仓/策略/托管/闲聊）
+     → mode=ask，question 里问清"要分析哪一只/什么需求"。
 2. 股票代码：优先用用户原话里的数字，A股 6 位数字直接放 ticker（不带后缀，后端判定交易所）。不要臆造代码。
    若用户只给名称没给代码，把名称放 name，ticker 填空。
 3. 公司名同时有 A股和港股（中芯国际=688981.SH+00981.HK、中国平安、比亚迪、招商银行、中信证券等）→ mode=ask，
-   question 列出可选项让用户选市场。只在一个市场上市的名称（贵州茅台、腾讯控股[仅港股]）→ mode=analyze。
+   question 列出可选项让用户选市场。只在一个市场上市的名称（贵州茅台、腾讯控股[仅港股]、海底捞[仅港股 6862.HK]）
+   → mode=analyze/quote（按规则 1 判定）。
 4. 日期：今天是 {_NOW.strftime('%Y-%m-%d')}（星期{('一二三四五六日')[_NOW.weekday()]}）。
    "今天/现在/今日"→ date="today"；"昨天"→"yesterday"；给了明确日期→原样 YYYY-MM-DD；没提→""。
    日期语义（含周末/收盘前后回退）由后端处理，你不要自己换算。
-5. market：能从代码/名称/原话明确推断才填（如用户说"分析下港股腾讯"→market=港股、name=腾讯）；推断不出填空串。
+5. market：能从代码/名称/原话明确推断才填（如用户说"查下港股腾讯股价"→market=港股、name=腾讯）；推断不出填空串。
 6. 若用户在多轮对话里已经选定了"港股/美股/北交所"（常见于你之前列出 A/港股选项、用户选了非 A股那个）：
    直接把对应市场代码填进 ticker（港股如 00981.HK、美股如 AAPL），不要只给名字——因为后端只能自动把
    A股名字解析成代码，港股/美股需要你给出代码。A股选择则可以只给名字（如 688981 或 中芯国际）。
@@ -144,13 +150,18 @@ def _is_bond(row: dict[str, str]) -> bool:
     return any(w in name for w in ("债", "水务", "次级", "地方债", "可转"))
 
 
-def _basicinfo_rows(term: str) -> list[dict[str, str]]:
-    """get_stock_basicinfo（NL 表格）→ [{code,name,exchange}]，失败返回空表。"""
+def _basicinfo_rows(term: str, timeout: int = 90) -> list[dict[str, str]]:
+    """get_stock_basicinfo（NL 表格）→ [{code,name,exchange}]，失败返回空表。
+
+    timeout 默认 90 = 既有行为（``watchlist.search_stocks`` 逐字不变）；OCR 代码纠错那条路
+    传更小的值——它在同步 HTTP 请求里跑，而 ``_wind_rpc`` 对瞬时错误还有指数退避重试，
+    单个名字最坏能挂几分钟，请求里等不起。
+    """
     r = _wind._call_tool(
         "stock_data",
         "get_stock_basicinfo",
         {"question": f"用表格返回 {term} 的证券简称、Wind代码、上市地点（不要多余说明）"},
-        timeout=90,
+        timeout=timeout,
     )
     data = r.get("data") or {}
     blocks = data.get("data") if isinstance(data, dict) else data

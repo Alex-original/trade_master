@@ -227,6 +227,17 @@ def get_instrument_context_from_state(state: Mapping[str, Any]) -> str:
     )
 
 
+def get_portfolio_context_from_state(state: Mapping[str, Any]) -> str:
+    """Return the injected portfolio snapshot (holdings + cash), or "" when absent.
+
+    Injected at run start so per-ticker research and decisions are portfolio-aware
+    (current position in this ticker, overall book, available cash). Empty for
+    bare programmatic states / tests that never supplied it.
+    """
+    context = state.get("portfolio_context")
+    return context if isinstance(context, str) and context.strip() else ""
+
+
 def create_msg_delete():
     def delete_messages(state):
         """Clear messages and add a context-anchored placeholder.

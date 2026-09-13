@@ -96,6 +96,13 @@ _BY_ID: dict[str, ModelCapabilities] = {
     "deepseek-reasoner": _DEEPSEEK_THINKING,
     "deepseek-v4-flash": _DEEPSEEK_THINKING,
     "deepseek-v4-pro": _DEEPSEEK_THINKING,
+    # 线上实际可用的 id（2026-09 起 /models 只返回 deepseek-flash 与
+    # deepseek-v4-pro）。deepseek-flash 同样是 thinking 模型：接受 tools 但
+    # 拒绝 tool_choice（实测 "required" 与强制函数都会 400 "Thinking mode
+    # does not support this tool_choice"），行为与 v4-pro 完全一致。它的名字里
+    # 没有 `v<数字>`，只靠下面的模式匹配会落到 _DEFAULT 而照发 tool_choice，
+    # 结构化输出（组合计划/交易员/研究经理）会整条断掉，所以这里显式登记。
+    "deepseek-flash": _DEEPSEEK_THINKING,
     # MiniMax — full official model lineup per
     # platform.minimax.io/docs/api-reference/text-openai-api
     "MiniMax-M2.7": _MINIMAX_THINKING,
@@ -110,7 +117,9 @@ _BY_ID: dict[str, ModelCapabilities] = {
 # Forward-compat patterns. New ``deepseek-v5-*`` / ``deepseek-reasoner-*``
 # or ``MiniMax-M3*`` variants inherit the thinking-mode quirks automatically.
 _BY_PATTERN: list[tuple[re.Pattern[str], ModelCapabilities]] = [
-    (re.compile(r"^deepseek-v\d"), _DEEPSEEK_THINKING),
+    # flash 家族也走 thinking 分支：`deepseek-flash` 以及将来可能的
+    # `deepseek-flash-*` 变体（都拒绝 tool_choice）。
+    (re.compile(r"^deepseek-(?:v\d|flash)"), _DEEPSEEK_THINKING),
     (re.compile(r"^deepseek-reasoner"), _DEEPSEEK_THINKING),
     (re.compile(r"^MiniMax-M\d"), _MINIMAX_THINKING),
 ]

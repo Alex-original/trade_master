@@ -10,6 +10,7 @@ from tradingagents.agents.schemas import TraderProposal, render_trader_proposal
 from tradingagents.agents.utils.agent_utils import (
     get_instrument_context_from_state,
     get_language_instruction,
+    get_portfolio_context_from_state,
 )
 from tradingagents.agents.utils.structured import (
     NO_EXTERNAL_TOOLS,
@@ -25,6 +26,12 @@ def create_trader(llm):
         company_name = state["company_of_interest"]
         instrument_context = get_instrument_context_from_state(state)
         investment_plan = state["investment_plan"]
+        portfolio_context = get_portfolio_context_from_state(state)
+        portfolio_section = (
+            f"Current Portfolio Snapshot:\n{portfolio_context}\n\n"
+            if portfolio_context
+            else ""
+        )
         # The research plan digests the debate but loses exact price structure;
         # give the Trader the technical market report so entry/stop levels are
         # grounded in real ATR / support-resistance / current price (#1167). The
@@ -59,6 +66,7 @@ def create_trader(llm):
                 "content": (
                     f"Here is the research team's investment plan for {company_name}. "
                     f"{instrument_context}\n\n"
+                    f"{portfolio_section}"
                     f"{report_section}"
                     f"Proposed Investment Plan:\n{investment_plan}\n\n"
                     f"Make an informed, strategic trading decision."

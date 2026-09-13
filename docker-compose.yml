@@ -1,0 +1,36 @@
+# Trade Master · 模拟交易 + AI 托管
+# 与 video-note 同机共存：独立项目、独立 postgres 容器，应用端口只绑宿主机回环、由 nginx 对外。
+services:
+  app:
+    build: .
+    container_name: trade-master-app
+    restart: unless-stopped
+    env_file: .env            # 生产 .env（KEY=value，见 deploy/.env.production.example）
+    environment:
+      - TZ=Asia/Shanghai      # 托管调度器按本地时间跑，必须用北京时间
+    ports:
+      - "127.0.0.1:8010:8010" # 只绑回环，公网经 nginx 反代进入
+    volumes:
+      - ./data:/app/data      # 持久化（行情缓存/报告等）
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    container_name: trade-master-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: trade_master
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: trade_master
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trade_master -d trade_master"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  db_data:
