@@ -231,7 +231,11 @@ function makeSandbox(opts = {}) {
     '   get btReportBlobUrl() { return btReportBlobUrl; },',
     '   set btCurrentRunIdForTest(v) { btCurrentRunId = v; },',
     // 移动端 Tab 归属表是 const 对象，直接导出即可（断言它归得对不对，见「移动端底部 Tab」一节）
-    '   toBase64, api, MOBILE_TAB_OF };',
+    '   toBase64, api, MOBILE_TAB_OF,',
+    // 持仓/自选的排序与卡片构造：都是纯函数，能直接喂数据断言
+    '   sortRows, toggleSort, caretOf, holdingCellsHtml,',
+    '   HOLD_GETTERS, WL_GETTERS,',
+    '   get SORTS() { return SORTS; }, };',
   ].join('');
   const factory = new Function(
     'document', 'window', 'localStorage', 'navigator', 'console', 'makeMsgStub',
@@ -1416,6 +1420,121 @@ const rowsOf = (html) => html.match(/<div class="table-row[^"]*"/g) || [];
     check('★ MOBILE_TAB_OF 没把 trust 归到 home（归错的话点「模拟交易」亮的是「交易」）',
       map && map.trust !== 'home' && map.backtest !== 'home',
       JSON.stringify(map));
+  }
+
+  // ------------------------------------------------- 移动端持仓牌组 + 排序 + 管理员门禁
+  section('移动端持仓牌组 / 排序 / 回测门禁');
+  {
+    const html = fs.readFileSync(HTML_PATH, 'utf8');
+    // 断言针对**规则**：注释里提到旧规则（"原本有一条…"）不算数，先剥掉 CSS 注释
+    const cssOnly = html.replace(/\/\*[\s\S]*?\*\//g, '');
+
+    // ① 持仓：桌面与手机是**同一张表**（表头在第一行、横向滑动看全列）。
+    //    此前是"桌面表格 vs 移动卡片牌组"两套 DOM 互斥，牌组已按用户反馈取消。
+    check('★ 持仓不再有第二套 DOM（.desktop-holdings / .mobile-holdings / 卡片牌组都删干净）',
+      !/\.mobile-holdings\s*\{/.test(cssOnly) && !/\.desktop-holdings\s*\{/.test(cssOnly)
+      && !/\.holding-deck\s*\{/.test(cssOnly) && !/class="mobile-holdings"/.test(html),
+      '还残留牌组/互斥的痕迹');
+    check('★ 手机上卡片内的表格**保留**（不再有一条"手机上一律藏表格"的规则）',
+      !/\.holdings-card \.table-row\s*\{\s*display:\s*none/.test(cssOnly),
+      '那条"手机藏表格"的规则又回来了 —— 监控条件与回测三张表会再次凭空消失');
+    check('★ 手机上靠横向滚动看全列（横滑在**表格**上，不是卡片上——后者会把卡片标题一起滑走）',
+      /@media \(max-width: 1023px\)[\s\S]*?\.holdings-table\s*\{[^}]*overflow-x:\s*auto/.test(cssOnly)
+      && /@media \(max-width: 1023px\)[\s\S]*?\.holdings-table \.table-row\s*\{[^}]*min-width:\s*620px/.test(cssOnly)
+      && !/@media \(max-width: 1023px\)[\s\S]*?\.holdings-card\s*\{[^}]*overflow-x:\s*auto/.test(cssOnly),
+      '横滑容器放错了层级');
+
+    // ② 表头在第一行且可点排序（桌面与手机同一套）
+    check('★ 持仓表的表头是常规第一行、每列都可点排序（持仓 7 列 ×2 + 自选 4 列 = 18）',
+      (html.match(/class="sortable" data-sort="/g) || []).length === 18,
+      String((html.match(/class="sortable" data-sort="/g) || []).length));
+    check('★ 所有持仓列表都有「当日盈亏」列（首页 + 托管 + 持仓页）',
+      (html.match(/data-sort="day_pnl"/g) || []).length === 2      // 两张表的表头
+      && html.includes('p.day_pnl == null')                        // 行构造器里读过它
+      && /day_pnl:\s*\(p\)\s*=>\s*p\.day_pnl/.test(html)          // 可排序
+      && /当日 ' \+/.test(html),                                  // 持仓页卡片那一行
+      'day_pnl 列没接全');
+    check('  当日盈亏为 null（缺昨收）时显示「—」且**不套涨跌色**（_upDown(null) 会返回 up）',
+      /p\.day_pnl == null\s*\n?\s*\? '<div class="num"><span class="muted">—<\/span><\/div>'/.test(html),
+      'null 会被画成绿色的涨');
+    // ①-b 所有表格：表头与数据一律左对齐、向右延伸、不许压住邻列
+    // 表格单元/表头在这个仓库里一律是**内联** style（JS 拼的 + 静态标记），所以"内联里没有
+    // text-align:right"就等于"表格没有一处右对齐"。剩下三处 CSS 里的 right 都不是表格列：
+    // .holding-right（持仓页卡片行的右半块）、.trade-right（成交流水两列）、现金输入框。
+    check('★ 表格的表头与数据没有一处右对齐（右对齐的格子装不下时会朝左溢出、压住前一列）',
+      !/style="text-align:\s*right/.test(html),
+      '还有右对齐的表头/单元格');
+    check('★ 统一护栏：表格单元 min-width:0 + 左对齐 + 可换行（grid 子项默认不许收缩，正是压列的原因）',
+      /\.table-row > div\s*\{[^}]*min-width:\s*0[^}]*text-align:\s*left[^}]*overflow-wrap:\s*break-word/.test(cssOnly),
+      '缺 .table-row > div 的收缩/换行护栏');
+    check('  监控条件的触发条件列可以在格内换行（一整句不挤出去）',
+      /\.monitor-cond \.plan-trigger\s*\{\s*white-space:\s*normal/.test(cssOnly),
+      '条件列还在 nowrap');
+
+    check('  排序条只在持仓页用（那一列是卡片流、没有表头可点）',
+      /\.hsort\.hsort-always\s*\{\s*display:\s*flex/.test(html)
+      && /bar\.className = 'hsort hsort-always'/.test(html),
+      '缺持仓页的排序条');
+
+    // ③ 排序
+    const sb = makeSandbox();
+    check('★ 四张表的排序状态初始都是「不排」（key=null ⇒ 行为与加排序之前一致）',
+      ['home', 'trust', 'positions', 'watchlist'].every(k => sb.SORTS[k].key === null),
+      JSON.stringify(sb.SORTS));
+
+    const rows = [
+      { stock_code: 'B', stock_name: '乙', pnl: 5, price: null },
+      { stock_code: 'A', stock_name: '甲', pnl: -3, price: 10 },
+      { stock_code: 'C', stock_name: '丙', pnl: null, price: 20 },
+    ];
+    const unsorted = sb.sortRows(rows, 'home', sb.HOLD_GETTERS);
+    check('  没选列时保持原顺序（不排序 = 逐字节不变）',
+      unsorted.map(r => r.stock_code).join('') === 'BAC', unsorted.map(r => r.stock_code).join(''));
+
+    sb.SORTS.home.key = 'pnl'; sb.SORTS.home.dir = 1;
+    const asc = sb.sortRows(rows, 'home', sb.HOLD_GETTERS).map(r => r.stock_code);
+    check('★ 升序按数值排，且 **null 排末尾**（不是当成 0 排最前）',
+      asc.join('') === 'ABC', asc.join(''));
+
+    sb.SORTS.home.dir = -1;
+    // 降序 = pnl 大的在前：5(B) → -3(A)，null(C) 仍在末尾 ⇒ BAC。
+    // （若把 null 当成 0，这里会是 BCA —— 这条断言的鉴别力就在这。）
+    const desc = sb.sortRows(rows, 'home', sb.HOLD_GETTERS).map(r => r.stock_code);
+    check('★ 降序时 null **仍在末尾**（与方向无关）', desc.join('') === 'BAC', desc.join(''));
+
+    sb.SORTS.home.key = 'name'; sb.SORTS.home.dir = 1;
+    const byName = sb.sortRows(rows, 'home', sb.HOLD_GETTERS).map(r => r.stock_code);
+    check('  按标的中文名排（localeCompare zh）', byName.length === 3, byName.join(''));
+
+    sb.SORTS.home.key = 'pnl'; sb.SORTS.home.dir = 1;
+    sb.toggleSort('home', 'pnl');
+    check('★ 再点同一列 = 反向', sb.SORTS.home.dir === -1, String(sb.SORTS.home.dir));
+    sb.toggleSort('home', 'price');
+    check('★ 换一列 = 从升序重新开始', sb.SORTS.home.key === 'price' && sb.SORTS.home.dir === 1,
+      JSON.stringify(sb.SORTS.home));
+    check('★ 箭头只在激活列出现（升 ▲ / 降 ▼）',
+      sb.caretOf('home', 'price') === ' ▲' && sb.caretOf('home', 'pnl') === '',
+      sb.caretOf('home', 'price') + '|' + sb.caretOf('home', 'pnl'));
+
+    // ④ 回测门禁：入口默认隐藏，拿到 is_admin 才放出来；switchView 另有兜底
+    check('★ 回测入口默认隐藏（.admin-only display:none）—— 等接口回来再隐藏会闪一下',
+      /\.admin-only\s*\{\s*display:\s*none/.test(html)
+      && /body\.is-admin \.nav-item\.admin-only\s*\{\s*display:\s*flex/.test(html),
+      '缺 .admin-only 的 fail-closed 默认态');
+    check('★ 移动端那张回测入口卡也只在 body.is-admin 时翻显',
+      /body\.is-admin \.bt-entry-card\s*\{\s*display:\s*flex/.test(html),
+      '移动端入口卡没有门禁');
+    check('★ switchView 有客户端兜底（非管理员直接 return）',
+      /viewId === 'backtest' && !document\.body\.classList\.contains\('is-admin'\)/.test(html),
+      '缺 switchView 兜底');
+    check('★ 报告走 srcdoc 而不是 <iframe src>（iframe 带不上 Authorization 头）',
+      /id="bt-capability-frame"/.test(html) && /loadCapabilityReport/.test(html)
+      && /frame\.srcdoc = await resp\.text\(\)/.test(html)
+      && !/id="bt-capability-frame"[^>]*\ssrc=/.test(html),
+      'iframe 的实现方式不对');
+    check('  iframe 带 sandbox="allow-scripts"（报告那张图要跑脚本，但拿不到应用的同源数据）',
+      /id="bt-capability-frame"\s+sandbox="allow-scripts"/.test(html),
+      '缺 sandbox');
   }
 
   console.log('\n' + '='.repeat(60));

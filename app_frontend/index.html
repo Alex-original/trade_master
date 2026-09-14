@@ -379,7 +379,17 @@ a { color: inherit; text-decoration: none; }
 /* 监控条件卡片：标的/监控日期/触发条件/动作/现价/触发状态 6 列。
    列之间留出间距——此前目标占比右对齐紧贴触发条件标签，视觉上粘成一团。 */
 .monitor-table { overflow-x: auto; }
-.monitor-table .table-row { grid-template-columns: 1.5fr 96px 1.5fr 84px 88px 88px; column-gap: 16px; min-width: 700px; }
+/* 六列**一律左对齐**：右对齐/居中的单元格在自己那一格装不下时，文字会朝两边溢出去压到邻列
+   （监控条件那一列尤为明显——条件是一整句）。左对齐之后内容只会往右长。
+   光靠对齐还不够：`.plan-trigger` 是 `white-space:nowrap` 的 inline-block，而 grid 子项默认
+   `min-width:auto` **不允许被压到内容宽度以下**，于是长句子仍然会挤出自己的轨道。
+   所以两处一起改：给条件列更大的份额，并让它**可以换行**。 */
+.monitor-table .table-row {
+  grid-template-columns: minmax(120px, 1.1fr) 92px minmax(180px, 2.4fr) 64px 80px 76px;
+  column-gap: 16px; min-width: 720px;
+}
+.monitor-cond { min-width: 0; }                      /* 允许缩到轨道宽度以内 */
+.monitor-cond .plan-trigger { white-space: normal; }  /* 一整句条件在格子里换行，而不是挤出去 */
 /* 同一只票的多档是一组：组内用虚线分隔、组的最后一行恢复实线 */
 .monitor-table .table-row.tier-open { border-bottom-style: dashed; }
 .monitor-table .table-row.tier-cont .stock-code { color: var(--brand, #2962FF); }
@@ -409,6 +419,8 @@ a { color: inherit; text-decoration: none; }
 .plan-progress-fill.error { background: var(--accent-up); }
 .plan-progress-head.error { color: var(--accent-up); }
 .plan-warn { font-size: 12px; color: var(--accent-warn); padding: 6px 16px 10px; line-height: 1.6; border-bottom: 1px solid var(--border-soft); }
+/* 持仓表 7 列（比默认多一列「当日盈亏」）；回测的净值曲线等仍走下面的默认 6 列 */
+.pos-table .table-row { grid-template-columns: 1.6fr 1fr 1.2fr 1fr 1.2fr 1.2fr 1fr; }
 .table-row {
   display: grid;
   grid-template-columns: 1.6fr 1fr 1.2fr 1fr 1.2fr 1fr;
@@ -649,7 +661,7 @@ a { color: inherit; text-decoration: none; }
 .entry-sub.trust { color: var(--brand-light); }
 
 /* 托管总览里的「历史回测」入口卡：**移动端独有**（桌面端从侧边栏进，这张卡绝不能出现）。
-   沿用 .mobile-entry-grid / .mobile-holdings 的老写法：默认 display:none，在 ≤1023px 里翻过来；
+   沿用 .mobile-entry-grid 的老写法：默认 display:none，在 ≤1023px 里翻过来；
    且**默认规则必须写在媒体查询之前**——写在后面会凭源码顺序压过 @media 内的规则
    （1425-1427 那个注释记着这个历史 bug 的代价）。 */
 .bt-entry-card {
@@ -757,9 +769,47 @@ a { color: inherit; text-decoration: none; }
   font-size: 9px;
   font-weight: 700;
 }
-.holding-right { text-align: right; }
+.holding-right { text-align: left; }
 .holding-right .price { font-size: 16px; font-weight: 700; letter-spacing: 0.3px; }
 .holding-right .pnl { font-size: 12px; font-weight: 600; margin-top: 2px; }
+
+/* ========== 排序条（持仓页用） ========== */
+/* 其余列表的表头本身就可点，只有持仓页是卡片流、没有表头，所以给它一条 chip 排序条。
+   默认隐藏（手机才需要），`.hsort-always` 让持仓页在桌面也显示。 */
+.hsort { display: none; gap: 8px; overflow-x: auto; padding-bottom: 10px;
+         scrollbar-width: none; -ms-overflow-style: none; }
+.hsort.hsort-always { display: flex; }   /* 持仓页没有表头，桌面也要能排 */
+.hsort::-webkit-scrollbar { display: none; }
+.hsort-chip {
+  flex: 0 0 auto; padding: 5px 11px; border-radius: 999px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  white-space: nowrap; user-select: none;
+}
+.hsort-chip.on { border-color: var(--brand); color: var(--brand-light); font-weight: 600; }
+
+/* 管理员专属入口：**默认隐藏**。那两个入口是静态 HTML，页面一加载就渲染出来了，
+   等 /api/account 回来再隐藏会闪一下；所以走 fail-closed 的默认态，
+   由 body.is-admin（loadAccount 里设）放出来。服务端另有 403，这里只是别露出点不动的入口。 */
+.admin-only { display: none; }
+body.is-admin .nav-item.admin-only { display: flex; }
+
+/* ========== 所有表格的统一约束 ==========
+   用户要求：表头与数据**一律左对齐、向右延伸，且不许侵犯其他列的数据**。
+   左对齐只是第一步 —— 真正会"压住邻列"的机制是：grid 子项默认 `min-width: auto`，
+   它不允许被压到内容宽度以下，于是任何一列装不下时就会溢出自己的轨道盖住邻居
+   （监控条件那一整句、以及各数值列，都是这么把邻列挤破的）。
+   所以这里统一允许收缩 + 允许在格内换行；配合表格自己的 min-width 与横向滚动，
+   **宁可整张表横向滑动，也不让列与列互相重叠**。 */
+.table-row > div {
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: break-word;
+}
+
+/* 表头可排序：给一点可点的暗示（箭头由 paintSortHeads 写在文字后面） */
+.table-row.head .sortable { cursor: pointer; user-select: none; }
+.table-row.head .sortable:hover { color: var(--brand-light); }
 
 /* ========== View 3: 财团托管页 ========== */
 .trust-tabs {
@@ -891,7 +941,7 @@ a { color: inherit; text-decoration: none; }
 .trade-row:last-child { border-bottom: none; }
 .trade-name { font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
 .trade-time { font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
-.trade-right { text-align: right; }
+.trade-right { text-align: left; }
 .trade-price { font-size: 14px; font-weight: 700; letter-spacing: 0.3px; }
 .trade-qty { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
 
@@ -1451,8 +1501,8 @@ a { color: inherit; text-decoration: none; }
 /* 持仓区「桌面表格 / 移动卡片」互斥切换：默认走桌面表格，≤1023px 再翻过来。
    这两条必须写在媒体查询**之前**——写在后面会凭源码顺序压过 @media 内的规则（历史 bug：
    手机端持仓区整块空白、桌面端交易行被压成 90px，都是它造成的）。 */
-.mobile-holdings { display: none; }
-.desktop-holdings { display: block; }
+/* 持仓表**桌面与手机是同一张**：手机不换形态，横向滑动看全列（表头也在里面、一起滑）。
+   此前这里是 .desktop-holdings / .mobile-holdings 两套 DOM 互斥，现在只剩一套。 */
 
 /* ========== Responsive ========== */
 @media (min-width: 1024px) {
@@ -1508,11 +1558,20 @@ a { color: inherit; text-decoration: none; }
   .summary-cell:nth-last-child(-n+2) { border-bottom: none; padding-bottom: 0; }
 
   .table-row { display: grid; }
-  .holdings-card .table-row { display: none; }
-  .mobile-holdings { display: block; }
-  .desktop-holdings { display: none; }
+  /* ⚠️ 这里原本有一条 `.holdings-card .table-row { display: none }`（手机上一律藏表格）。
+     当初的用意是"让位给移动卡片"—— 但移动卡片已取消、持仓表改成**两边同一张、横向滑动**，
+     于是它对手册内**每一张**表都只剩副作用：监控条件与回测结果的三张表都曾被它整个隐藏，
+     而胜负只由源码顺序决定（它与 .monitor-table .table-row 特异性平手）。**已删除。**
+     现在卡片内的表格一律保留，靠下面的横向滚动看全列 —— 不会再出现"某张表在手机上凭空消失"。 */
+  /* 横滑放在**表格**上而不是卡片上：放卡片上会把卡片的标题和按钮一起滑走。 */
+  .holdings-table { overflow-x: auto; }
+  .holdings-table .table-row { font-size: 12px; padding: 10px 12px; min-width: 620px; }
+  .monitor-table .table-row {
+    grid-template-columns: 1.5fr 74px 1.5fr 62px 74px 74px; column-gap: 10px; min-width: 600px;
+  }
+  .hsort { display: flex; }
   .mobile-entry-grid { display: grid; }
-  .bt-entry-card { display: flex; }
+  body.is-admin .bt-entry-card { display: flex; }   /* fail-closed：非管理员连这张卡都不出现 */
 
   .trust-strip { flex-direction: column; align-items: flex-start; gap: 8px; }
   .trust-right { width: 100%; justify-content: space-between; }
@@ -1634,8 +1693,13 @@ body.in-chat .main { padding: 8px 20px 90px; }
   flex: 1; display: flex; align-items: center; justify-content: center;
   padding: 100px 120px; background: var(--login-bg);
 }
+/* ⚠️ `min-width: 0` 不是可选项：`<input>` 有**固有的最小内容宽度**（来自默认 size≈20 字符，
+   约 180px），而 flex 子项默认 `min-width: auto` **不允许被压到内容宽度以下** ——
+    于是手机上「验证码 + 获取验证码(110px nowrap)」这一行压不下去，
+   把整张卡片顶得比屏幕还宽；卡片又是居中的，超出部分就偏向一侧被裁掉，
+   看起来就是"卡片太宽、输入框两侧间距不一样"。允许收缩之后它才会跟着屏幕变窄。 */
 .login-card {
-  width: 460px; max-width: 100%;
+  width: min(460px, 100%); min-width: 0;
   background: var(--login-card);
   border: 1px solid var(--login-border);
   border-radius: 20px;
@@ -1647,7 +1711,7 @@ body.in-chat .main { padding: 8px 20px 90px; }
 .field-label { font-size: 13px; color: var(--login-text-2); font-weight: 500; margin-bottom: -16px; }
 
 .phone-input, .code-input {
-  display: flex; align-items: center; height: 56px; padding: 0 16px;
+  display: flex; align-items: center; height: 56px; padding: 0 16px; min-width: 0;
   border-radius: 10px;
   background: var(--login-input-bg);
   border: 1px solid var(--login-border-input);
@@ -1655,12 +1719,12 @@ body.in-chat .main { padding: 8px 20px 90px; }
 }
 .phone-input:focus-within, .code-input:focus-within { border-color: var(--login-brand); }
 .phone-field, .code-field {
-  flex: 1; height: 100%;
+  flex: 1; min-width: 0; height: 100%;
   font-size: 15px; color: var(--login-text); font-family: inherit;
 }
 .phone-field::placeholder, .code-field::placeholder { color: var(--login-text-3); }
 .code-field { letter-spacing: 2px; }
-.code-row { display: flex; gap: 12px; }
+.code-row { display: flex; gap: 12px; min-width: 0; }
 .code-row .code-input { flex: 1; }
 .get-code-btn {
   width: 130px; height: 56px; flex-shrink: 0; white-space: nowrap;
@@ -1712,12 +1776,22 @@ body.in-chat .main { padding: 8px 20px 90px; }
 /* 响应式：窄屏收起品牌区 */
 @media (max-width: 1024px) {
   .brand-panel { display: none; }
-  .login-panel { padding: 40px 20px; }
+  /* 左右用 max(20px, safe-area)：`viewport-fit=cover` 已开，但没人用 env()——
+     刘海屏横屏时左右安全区不为零，不补的话内容会被圆角/刘海吃掉**一边**，
+     视觉上正是"两侧间距不一样"。 */
+  .login-panel {
+    padding: 40px max(20px, env(safe-area-inset-right)) 40px max(20px, env(safe-area-inset-left));
+  }
 }
 @media (max-width: 480px) {
-  .login-card { padding: 28px 24px; border-radius: 16px; }
-  .login-title { font-size: 24px; }
-  .get-code-btn { width: 110px; font-size: 13px; }
+  .login-panel {
+    padding: 24px max(16px, env(safe-area-inset-right)) 24px max(16px, env(safe-area-inset-left));
+  }
+  .login-card { padding: 24px 20px; border-radius: 16px; gap: 20px; }
+  .login-title { font-size: 22px; }
+  .get-code-btn { width: 104px; font-size: 13px; }
+  .phone-input, .code-input { height: 50px; padding: 0 12px; }
+  .login-field-gap { height: 0; }
 }
 
 /* ===== AI 解析确认：可编辑持仓明细 + 汇总 ===== */
@@ -1844,7 +1918,7 @@ body.in-chat .main { padding: 8px 20px 90px; }
 .se-cash-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; }
 .se-cash-l { font-size: 12px; color: var(--text-secondary); display: flex; align-items: baseline; gap: 6px; }
 .se-cash-l .hint { font-size: 10px; color: var(--text-tertiary); }
-.se-cash-row .se-in { max-width: 200px; text-align: right; font-weight: 600; font-variant: tabular-nums; }
+.se-cash-row .se-in { max-width: 200px; text-align: left; font-weight: 600; font-variant: tabular-nums; }
 
 /* 非阻塞 toast：替代原生 alert，不打断操作 */
 .toast-wrap { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 9999; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
@@ -2012,7 +2086,7 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
       <span>模拟量化</span>
     </div>
 
-    <div class="nav-item" data-view="backtest">
+    <div class="nav-item admin-only" data-view="backtest">
       <svg viewBox="0 0 20 20" fill="none">
         <path d="M3 16.5h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
         <path d="M3.5 13l4-4.5 3 2.5 5.5-6" stroke="currentColor" stroke-width="1.8"
@@ -2141,22 +2215,20 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
             </div>
           </div>
 
-          <div class="holdings-table desktop-holdings">
+          <div class="holdings-table pos-table">
             <div class="table-row head">
-              <div>股票</div>
-              <div style="text-align:right">现价</div>
-              <div style="text-align:right">持仓/可用</div>
-              <div style="text-align:right">成本价</div>
-              <div style="text-align:right">浮动盈亏</div>
-              <div style="text-align:right">仓位占比</div>
+              <div class="sortable" data-sort="name">股票</div>
+              <div class="sortable" data-sort="price">现价</div>
+              <div class="sortable" data-sort="qty">持仓/可用</div>
+              <div class="sortable" data-sort="cost">成本价</div>
+              <div class="sortable" data-sort="pnl">浮动盈亏</div>
+              <div class="sortable" data-sort="day_pnl">当日盈亏</div>
+              <div class="sortable" data-sort="ratio">仓位占比</div>
             </div>
             <div id="home-desk-rows"></div>
           </div>
 
           <!-- 移动端持仓卡片 -->
-          <div class="mobile-holdings" style="padding:0 16px 16px">
-            <div id="home-mob-rows"></div>
-          </div>
         </div>
 
         <aside class="ai-panel">
@@ -2354,19 +2426,17 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
           <span class="holdings-title">托管持仓明细 · 实时盈亏</span>
           <span class="muted" id="trust-count-sub" style="font-size:12px">0 只</span>
         </div>
-        <div class="holdings-table desktop-holdings">
+        <div class="holdings-table pos-table">
           <div class="table-row head">
-            <div>股票</div>
-            <div style="text-align:right">现价</div>
-            <div style="text-align:right">持仓/可用</div>
-            <div style="text-align:right">成本价</div>
-            <div style="text-align:right">浮动盈亏</div>
-            <div style="text-align:right">仓位占比</div>
+            <div class="sortable" data-sort="name">股票</div>
+            <div class="sortable" data-sort="price">现价</div>
+            <div class="sortable" data-sort="qty">持仓/可用</div>
+            <div class="sortable" data-sort="cost">成本价</div>
+            <div class="sortable" data-sort="pnl">浮动盈亏</div>
+            <div class="sortable" data-sort="day_pnl">当日盈亏</div>
+            <div class="sortable" data-sort="ratio">仓位占比</div>
           </div>
           <div id="trust-desk-rows"></div>
-        </div>
-        <div class="mobile-holdings" style="padding:0 16px 16px">
-          <div id="trust-mob-rows"></div>
         </div>
         <div id="trust-pos-empty" class="muted" style="font-size:12px;padding:16px;text-align:center;color:var(--text-tertiary);display:none">暂无托管持仓 —— 点上方「粘贴持仓快照」用真实持仓起步，或「空仓启动」用默认 50 万资金由托管自由建仓</div>
       </div>
@@ -2406,11 +2476,11 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
         <div class="monitor-table">
           <div class="table-row head">
             <div>标的</div>
-            <div style="text-align:center">监控日期</div>
-            <div style="text-align:left">触发条件</div>
-            <div style="text-align:center">动作</div>
-            <div style="text-align:right">现价</div>
-            <div style="text-align:center">触发状态</div>
+            <div>监控日期</div>
+            <div>触发条件</div>
+            <div>动作</div>
+            <div>现价</div>
+            <div>触发状态</div>
           </div>
           <div id="monitor-rows"></div>
         </div>
@@ -2441,8 +2511,11 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
 
       <div class="ai-trades">
         <div class="trades-header">
-          <span>AI 调仓记录 · 12 笔</span>
-          <span style="color: var(--brand-light); cursor: pointer">查看全部 ›</span>
+          <!-- 计数由 loadTrades() 写（此前是硬编码的「12 笔」，与实际笔数无关） -->
+          <span id="trust-trades-count">AI 调仓记录</span>
+          <!-- 真的能点：切到「委托成交」子 Tab（那里本来就是完整流水），不另写一套列表 -->
+          <span style="color: var(--brand-light); cursor: pointer"
+                onclick="openTrustRecords()">查看全部 ›</span>
         </div>
         <div class="trade-row">
           <div>
@@ -2711,6 +2784,24 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
     <!-- View 11: 历史回测 -->
     <section class="view" id="view-backtest">
 
+      <!-- 托管团队能力评估（管理员专属）：整页报告嵌在这里，下面仍是回测工具本身。
+           ⚠️ 报告走 srcdoc 而不是 <iframe src>：应用用 Authorization: Bearer（token 在
+           localStorage），iframe 发起的是浏览器裸请求、带不上这个头，直接 src 必然 403。
+           另外 srcdoc 也把报告的 CSS 关进独立源里 —— 它自己定义了 :root 变量，
+           内联进来会和应用的同名变量打架。 -->
+      <div class="holdings-card" id="bt-capability" style="margin-bottom:16px">
+        <div class="holdings-header">
+          <span class="holdings-title">托管团队能力评估</span>
+          <span class="muted" style="font-size:12px">四轮真回测 · 决策质量</span>
+        </div>
+        <div id="bt-capability-empty" class="muted"
+             style="font-size:12px;padding:16px;text-align:center;color:var(--text-tertiary)">
+          正在加载报告…
+        </div>
+        <iframe id="bt-capability-frame" sandbox="allow-scripts" title="托管团队能力评估"
+                style="display:none;width:100%;height:1400px;border:0;background:var(--bg-card)"></iframe>
+      </div>
+
       <!-- 发起 -->
       <div class="holdings-card" style="margin-bottom:16px">
         <div class="holdings-header">
@@ -2842,11 +2933,11 @@ AI 智能托管，自动调仓，解放你的盯盘时间</p>
         <div class="monitor-table">
           <div class="table-row head">
             <div>标的</div>
-            <div style="text-align:center">执行日</div>
-            <div style="text-align:left">触发条件</div>
-            <div style="text-align:center">动作</div>
-            <div style="text-align:right">执行价</div>
-            <div style="text-align:center">触发状态</div>
+            <div>执行日</div>
+            <div>触发条件</div>
+            <div>动作</div>
+            <div>执行价</div>
+            <div>触发状态</div>
           </div>
           <div id="bt-monitor-rows"></div>
         </div>
@@ -3091,6 +3182,9 @@ function syncChatImmersive(viewId) {
 window.addEventListener('resize', () => syncChatImmersive());
 
 function switchView(viewId) {
+  // 历史回测只对管理员开放。入口已经藏了，这里是第二道——万一有人手敲 switchView('backtest')，
+  // 也不该看到一个空白页（服务端另有 403，那是真正的门）。
+  if (viewId === 'backtest' && !document.body.classList.contains('is-admin')) return;
   // 沉浸式对话的返回目标：进对话之前先记下当前真正在看的页面。
   // 不能靠 lastTopView——它紧接着就会被 viewId('chat') 覆盖掉，那样返回键只会回到首页。
   if (viewId === 'chat') {
@@ -3133,6 +3227,7 @@ function switchView(viewId) {
   }
   // 进回测页：拉列表，并自动接上还在跑的那一条（十小时的长任务，刷新不该让进度消失）
   if (viewId === 'backtest' && typeof loadBacktestPanel === 'function') {
+    loadCapabilityReport().catch(() => {});
     loadBacktestPanel().catch(() => {});
   }
 }
@@ -3540,20 +3635,20 @@ function renderBacktestResult(data) {
     const row = (name, ret, assets, note) =>
       '<div class="table-row"><div><div class="stock-name">' + name + '</div>'
       + '<div class="stock-code">' + note + '</div></div>'
-      + '<div class="price-cell ' + btCls(ret) + '" style="text-align:right">' + btPct(ret) + '</div>'
-      + '<div style="text-align:right" class="num">' + fmt(assets) + '</div></div>';
+      + '<div class="price-cell ' + btCls(ret) + '">' + btPct(ret) + '</div>'
+      + '<div class="num">' + fmt(assets) + '</div></div>';
     bl.innerHTML =
       '<div class="table-row head"><div>口径</div>'
-      + '<div style="text-align:right">区间收益</div>'
-      + '<div style="text-align:right">期末资产</div></div>'
+      + '<div>区间收益</div>'
+      + '<div>期末资产</div></div>'
       + row('AI 托管策略', res.total_return, res.final_assets, '本轮回测的团队决策')
       + row('等权买入持有（主基准）', eq.total_return, eq.total_assets, '同一起点等权买入，之后躺着不动')
       + row('沪深300（次基准）', ix.total_return, ix.total_assets, '这段行情本身')
       + '<div class="table-row"><div><div class="stock-name">超额收益</div>'
       + '<div class="stock-code">团队决策相对主基准 / 相对沪深300</div></div>'
-      + '<div class="price-cell ' + btCls(res.excess_return) + '" style="text-align:right">'
+      + '<div class="price-cell ' + btCls(res.excess_return) + '">'
       + btPct(res.excess_return) + '</div>'
-      + '<div class="price-cell ' + btCls(res.excess_return_index) + '" style="text-align:right">'
+      + '<div class="price-cell ' + btCls(res.excess_return_index) + '">'
       + btPct(res.excess_return_index) + '</div></div>';
   }
 
@@ -3563,19 +3658,19 @@ function renderBacktestResult(data) {
   if (eqt) {
     eqt.innerHTML =
       '<div class="table-row head"><div>交易日</div>'
-      + '<div style="text-align:right">现金</div>'
-      + '<div style="text-align:right">市值</div>'
-      + '<div style="text-align:right">总资产</div>'
-      + '<div style="text-align:right">当日盈亏</div>'
-      + '<div style="text-align:right">成交</div></div>'
+      + '<div>现金</div>'
+      + '<div>市值</div>'
+      + '<div>总资产</div>'
+      + '<div>当日盈亏</div>'
+      + '<div>成交</div></div>'
       + steps.map(s =>
           '<div class="table-row' + (s.status && s.status !== 'ok' ? ' bt-degraded' : '') + '">'
           + '<div>' + s.trade_date + '</div>'
-          + '<div style="text-align:right" class="num">' + fmt(s.cash) + '</div>'
-          + '<div style="text-align:right" class="num">' + fmt(s.market_value) + '</div>'
-          + '<div style="text-align:right" class="num">' + fmt(s.total_assets) + '</div>'
-          + '<div style="text-align:right" class="num ' + btCls(s.day_pnl) + '">' + sign(s.day_pnl) + '</div>'
-          + '<div style="text-align:right" class="num">' + (s.trade_count || 0) + ' 笔</div>'
+          + '<div class="num">' + fmt(s.cash) + '</div>'
+          + '<div class="num">' + fmt(s.market_value) + '</div>'
+          + '<div class="num">' + fmt(s.total_assets) + '</div>'
+          + '<div class="num ' + btCls(s.day_pnl) + '">' + sign(s.day_pnl) + '</div>'
+          + '<div class="num">' + (s.trade_count || 0) + ' 笔</div>'
           + '</div>').join('');
   }
 
@@ -3825,28 +3920,28 @@ function renderBacktestList(runs) {
   }
   el.innerHTML =
     '<div class="table-row head"><div>区间</div>'
-    + '<div style="text-align:right">状态</div>'
-    + '<div style="text-align:right">总收益率</div>'
-    + '<div style="text-align:right">最大回撤</div>'
-    + '<div style="text-align:right">进度</div>'
-    + '<div style="text-align:right">操作</div></div>'
+    + '<div>状态</div>'
+    + '<div>总收益率</div>'
+    + '<div>最大回撤</div>'
+    + '<div>进度</div>'
+    + '<div>操作</div></div>'
     + runs.map(r =>
         '<div class="table-row bt-list-row">'
         + '<div onclick="btOpen(' + r.run_id + ')"><div class="stock-name">'
         + r.start_date + ' ~ ' + r.end_date + '</div>'
         + '<div class="stock-code">' + (r.init_mode === 'copy' ? '复制起始持仓' : '空仓起步')
         + ' · 初始资金 ' + fmt(r.init_cash) + '</div></div>'
-        + '<div style="text-align:right">' + (BT_STATUS_TEXT[r.status] || r.status) + '</div>'
-        + '<div style="text-align:right" class="num ' + btCls(r.total_return) + '">'
+        + '<div>' + (BT_STATUS_TEXT[r.status] || r.status) + '</div>'
+        + '<div class="num ' + btCls(r.total_return) + '">'
         + btPct(r.total_return) + '</div>'
-        + '<div style="text-align:right" class="num">' + btPct(r.max_drawdown) + '</div>'
-        + '<div style="text-align:right"><div class="num">' + (r.done || 0) + ' / ' + (r.total || 0) + '</div>'
+        + '<div class="num">' + btPct(r.max_drawdown) + '</div>'
+        + '<div><div class="num">' + (r.done || 0) + ' / ' + (r.total || 0) + '</div>'
         + (r.elapsed_text
             ? '<div class="stock-code">'
               + (BT_TERMINAL.includes(r.status) ? '用时 ' : '已跑 ') + r.elapsed_text + '</div>'
             : '')
         + '</div>'
-        + '<div style="text-align:right"><span class="link" onclick="btDelete(' + r.run_id
+        + '<div><span class="link" onclick="btDelete(' + r.run_id
         + ')">删除</span></div></div>').join('');
 }
 
@@ -4113,6 +4208,29 @@ async function btOpen(runId) {
   } catch (e) { toast(e.message); }
 }
 
+/* 一次性把能力评估报告取回来塞进 iframe.srcdoc（带 Authorization 头，见那段 HTML 注释）。
+   报告是静态的，取到就缓存住，切来切去不重复请求。 */
+let btCapabilityLoaded = false;
+async function loadCapabilityReport() {
+  if (btCapabilityLoaded) return;
+  const frame = document.getElementById('bt-capability-frame');
+  const empty = document.getElementById('bt-capability-empty');
+  if (!frame) return;
+  try {
+    const resp = await fetch('/api/backtest/capability', {
+      headers: { 'Authorization': 'Bearer ' + getToken() },
+    });
+    if (!resp.ok) throw new Error('报告加载失败 ' + resp.status);
+    frame.srcdoc = await resp.text();
+    frame.style.display = 'block';
+    if (empty) empty.style.display = 'none';
+    btCapabilityLoaded = true;
+  } catch (e) {
+    if (empty) empty.textContent = '报告暂时取不到：' + e.message;
+    console.error(e);
+  }
+}
+
 async function loadBacktestPanel() {
   try {
     const data = await api('/api/backtest/list');
@@ -4126,6 +4244,8 @@ async function loadBacktestPanel() {
 
 async function loadAccount() {
   const acc = await api('/api/account');
+  // 管理员入口的显隐开关。默认（body 上没有这个类）是隐藏 —— 见 .admin-only 的 CSS 注释。
+  document.body.classList.toggle('is-admin', !!acc.is_admin);
   const cards = document.querySelectorAll('#view-home .kpi-card');
   const kpis = document.querySelectorAll('#view-home .kpi-value');
   if (kpis.length >= 4) {
@@ -4173,10 +4293,28 @@ async function loadPositions() {
   // summary 由 loadAccount 以 /api/account 权威口径（含券商快照）填写；这里不再重复填行级汇总
   const count = section.querySelector('.list-meta .count');
   if (count) count.textContent = positions.length;
-  // 列表
+  LIST_CACHE.positions = positions;
+  renderPositionsList(positions);
+  // 交易首页「我的持仓」卡片同步真实数据
+  renderHomeHoldings(positions);
+}
+
+/* 持仓页列表：同一套排序（页面上没有表头，所以排序条由 renderSortBar 画在列表上方）。
+   这个列表是**增量 DOM**（不是整块 innerHTML），所以排序后要整体重画一遍。 */
+function renderPositionsList(positions) {
+  const section = document.getElementById('view-positions');
+  if (!section) return;
   section.querySelectorAll('.holding-row').forEach(el => el.remove());
+  if (!document.getElementById('positions-sort')) {
+    const bar = document.createElement('div');
+    bar.className = 'hsort hsort-always';   // 这一条桌面也要显示：持仓页没有表头
+    bar.id = 'positions-sort';
+    bar.style.padding = '0 0 10px';
+    section.insertBefore(bar, section.querySelector('.fab'));
+  }
   const fab = section.querySelector('.fab');
-  positions.forEach(p => {
+  renderSortBar('positions', document.getElementById('positions-sort'));
+  sortRows(positions || [], 'positions', HOLD_GETTERS).forEach(p => {
     const row = document.createElement('div');
     row.className = 'holding-row';
     row.dataset.code = p.stock_code;
@@ -4192,68 +4330,195 @@ async function loadPositions() {
       '<div class="holding-right">' +
         '<div class="price ' + (p.price != null && p.pnl != null && p.cost_price != null ? pnlClass(p.price >= p.cost_price ? 1 : -1) : '') + ' num">' + fmt(p.price) + '</div>' +
         '<div class="pnl ' + (up ? 'up' : 'down') + ' num">' + sign(p.pnl) + ' · ' + fmt(p.pnl_pct ? p.pnl_pct * 100 : 0) + '%</div>' +
+        '<div class="pnl num" style="color:var(--text-secondary)">当日 ' +
+          (p.day_pnl == null ? '—' : sign(p.day_pnl)) + '</div>' +
       '</div>';
     section.insertBefore(row, fab);
   });
-  // 交易首页「我的持仓」卡片同步真实数据
-  renderHomeHoldings(positions);
 }
 
 /* 交易首页「我的持仓」：桌面表格 + 移动卡片，均由真实持仓渲染（替代写死演示行） */
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
+/* ========== 持仓 / 自选：共用的行构造器、卡片牌组与排序 ==========
+
+   为什么要有这一节：首页持仓与托管持仓此前**各写一份桌面模板 + 一份移动模板**，
+   四份模板互相抄（改一处得改四处，加排序更是没处下手）。这里收敛成两个构造器、两处共用；
+   **排序只在这一层做一次**，桌面表格与移动牌组必然一致，不会出现"两边排得不一样"。 */
+
+/* 可排字段：表头 `data-sort` 的取值 → 取值器。
+   ⚠️ 取值器允许返回 null（行情拿不到时 price / cost_price 就是 null），
+   `sortRows` 统一把 null 排到末尾 —— **绝不能当成 0**，否则"没行情的票"会被排成"跌得最狠"。 */
+const HOLD_GETTERS = {
+  name:    (p) => p.stock_name || p.stock_code || '',
+  price:   (p) => p.price,
+  qty:     (p) => p.hold_qty,
+  cost:    (p) => p.cost_price,
+  pnl:     (p) => p.pnl,
+  pnl_pct: (p) => p.pnl_pct,
+  day_pnl: (p) => p.day_pnl,
+  ratio:   (p) => (p.assets_ratio == null ? p.position_ratio : p.assets_ratio),
+};
+const WL_GETTERS = {
+  name:       (s) => s.stock_name || s.stock_code || '',
+  price:      (s) => s.price,
+  change_pct: (s) => s.change_pct,
+  change:     (s) => s.change,
+};
+
+/* 各表的排序状态。`key === null` = **不排序、保持接口原顺序** ——
+   这样默认行为与加排序之前逐字节相同，既有断言零回归。 */
+const SORTS = {
+  home:      { key: null, dir: 1 },
+  trust:     { key: null, dir: 1 },
+  positions: { key: null, dir: 1 },
+  watchlist: { key: null, dir: 1 },
+};
+
+/* 最近一次拿到的数据。排序点击只重渲染、**不重新请求**：列表是行情快照，
+   为了换个顺序再打一次后端没有意义。 */
+const LIST_CACHE = { home: [], trust: [], positions: [], watchlist: [] };
+
+function sortRows(rows, listKey, getters) {
+  const st = SORTS[listKey];
+  if (!st || !st.key) return rows;            // 没选列 = 原样返回
+  const get = getters[st.key];
+  if (!get) return rows;
+  const out = rows.slice();
+  out.sort((a, b) => {
+    const va = get(a), vb = get(b);
+    const na = (va === null || va === undefined || va === '');
+    const nb = (vb === null || vb === undefined || vb === '');
+    if (na && nb) return 0;
+    if (na) return 1;                          // null 恒排末尾，与升降序无关
+    if (nb) return -1;
+    let c;
+    if (typeof va === 'number' && typeof vb === 'number') c = va - vb;
+    else c = String(va).localeCompare(String(vb), 'zh-Hans-CN');   // 标的按中文名排
+    return c * st.dir;
+  });
+  return out;
+}
+
+function toggleSort(listKey, key) {
+  const st = SORTS[listKey];
+  if (!st) return;
+  if (st.key === key) st.dir = -st.dir;        // 再点同一列 = 反向
+  else { st.key = key; st.dir = 1; }           // 换列 = 从升序开始
+}
+
+function caretOf(listKey, key) {
+  const st = SORTS[listKey];
+  if (!st || st.key !== key) return '';
+  return st.dir > 0 ? ' ▲' : ' ▼';
+}
+
+/* 传进来的可以是元素、元素 id，或 null（自己从 deskEl 的父节点找）。 */
+function paintSortHeads(deskEl) {
+  if (!deskEl || !deskEl.parentElement) return;
+  const head = deskEl.parentElement.querySelector('.table-row.head');
+  if (!head) return;
+  const key = head.dataset.list;
+  head.querySelectorAll('[data-sort]').forEach(el => {
+    if (el.dataset.label == null) el.dataset.label = el.textContent;   // 首次记下原文，之后只换后缀
+    el.textContent = el.dataset.label + caretOf(key, el.dataset.sort);
+  });
+}
+
+function bindSortHeads(deskEl, listKey, headEl) {
+  const head = headEl || (deskEl && deskEl.parentElement
+    ? deskEl.parentElement.querySelector('.table-row.head') : null);
+  if (!head) return;
+  head.dataset.list = listKey;
+  head.querySelectorAll('[data-sort]').forEach(el => {
+    el.style.cursor = 'pointer';
+    el.style.userSelect = 'none';
+    el.onclick = () => { toggleSort(listKey, el.dataset.sort); rerenderList(listKey); };
+  });
+}
+
+/* 手机上没有表头可点，所以给牌组配一条排序 chip 条（复用 .hsort 的横滑写法）。 */
+const HOLD_SORT_CHIPS = [
+  ['name', '标的'], ['price', '现价'], ['qty', '数量'], ['cost', '成本'],
+  ['pnl', '浮动盈亏'], ['day_pnl', '当日盈亏'], ['pnl_pct', '盈亏%'], ['ratio', '占比'],
+];
+const WL_SORT_CHIPS = [['name', '标的'], ['price', '最新价'], ['change_pct', '涨跌幅'], ['change', '涨跌额']];
+
+function renderSortBar(listKey, el, chips) {
+  if (!el) return;
+  const list = chips || HOLD_SORT_CHIPS;
+  el.innerHTML = list.map(([k, label]) =>
+    '<span class="hsort-chip' + (SORTS[listKey].key === k ? ' on' : '') + '" data-sort="' + k + '">' +
+    esc(label) + caretOf(listKey, k) + '</span>').join('');
+  el.querySelectorAll('.hsort-chip').forEach(c => {
+    c.onclick = () => { toggleSort(listKey, c.dataset.sort); rerenderList(listKey); };
+  });
+}
+
+function rerenderList(listKey) {
+  if (listKey === 'home') renderHomeHoldings(LIST_CACHE.home);
+  else if (listKey === 'trust') renderTrustHoldings(LIST_CACHE.trust);
+  else if (listKey === 'positions') renderPositionsList(LIST_CACHE.positions);
+  else if (listKey === 'watchlist') renderWlList(LIST_CACHE.watchlist);
+}
+
+/* ---- 数值与占比：原先在 renderHomeHoldings / renderTrustOverview 里各写一份局部闭包 ---- */
+function holdingRatio(p) {
+  const r = (p.assets_ratio == null ? p.position_ratio : p.assets_ratio) || 0;
+  return Math.max(0, Math.min(1, r));
+}
+function holdingPctText(p) { return (holdingRatio(p) * 100).toFixed(2) + '%'; }
+function holdingBarHtml(p, wpx) {
+  return '<div class="position-bar" style="display:inline-block;width:' + wpx + 'px;vertical-align:middle">' +
+    '<div class="position-fill" style="width:' + Math.max(3, Math.round(holdingRatio(p) * 100)) + '%"></div></div>';
+}
+function _upDown(v) { return (v || 0) >= 0 ? 'up' : 'down'; }
+function _priceUp(p) { return (p.price != null && p.cost_price != null && p.price >= p.cost_price); }
+
+/* 桌面表格：6 个单元格（列顺序必须与表头一致） */
+function holdingCellsHtml(p) {
+  return '<div class="table-row" data-code="' + esc(p.stock_code) + '" style="cursor:pointer">' +
+    '<div class="stock-cell"><span class="stock-name">' + esc(p.stock_name || p.stock_code) + '</span>' +
+      '<span class="stock-code">' + esc(p.stock_code) + '</span></div>' +
+    '<div class="price-cell ' + (_priceUp(p) ? 'up' : 'down') + ' num">' + fmt(p.price) + '</div>' +
+    '<div class="muted num">' + (p.hold_qty || 0) + ' / ' + (p.available_qty || 0) + '</div>' +
+    '<div class="muted num">' + fmt(p.cost_price) + '</div>' +
+    '<div class="price-cell ' + _upDown(p.pnl) + ' num">' + sign(p.pnl) + '</div>' +
+    // 当日盈亏：缺昨收（新上市/停牌数据不足）时是 null，显示「—」而不是 0。
+    // ⚠️ 这时**不能**套 _upDown —— 它对 null 会返回 'up'，把"没有数据"画成绿色的涨。
+    (p.day_pnl == null
+      ? '<div class="num"><span class="muted">—</span></div>'
+      : '<div class="price-cell ' + _upDown(p.day_pnl) + ' num">' + sign(p.day_pnl) + '</div>') +
+    '<div>' + holdingBarHtml(p, 56) +
+      '<span class="num" style="font-size:11px;margin-left:6px;color:var(--text-secondary)">' +
+      holdingPctText(p) + '</span></div>' +
+    '</div>';
+}
+
+/* 首页与托管共用的落地函数：排序 → 画表 → 更新表头箭头。
+   手机与桌面**看的是同一张表**（表头在第一行、横向滑动看全列），所以只有一条渲染路径，
+   排序也必然一致 —— 不存在"两边排得不一样"。 */
+function paintHoldings(listKey, deskEl, pos) {
+  const rows = sortRows(pos, listKey, HOLD_GETTERS);
+  if (deskEl) deskEl.innerHTML = rows.map(holdingCellsHtml).join('');
+  paintSortHeads(deskEl);
+}
+
 function renderHomeHoldings(positions) {
   const desk = document.getElementById('home-desk-rows');
-  const mob = document.getElementById('home-mob-rows');
-  if (!desk || !mob) return;
+  if (!desk) return;
+  LIST_CACHE.home = positions || [];
   const cards = document.querySelectorAll('#view-home .kpi-card');
   if (cards.length >= 3) {
     const sub2 = cards[2].querySelector('.kpi-sub');
-    if (sub2) sub2.textContent = '持仓 ' + positions.length + ' 只';
+    if (sub2) sub2.textContent = '持仓 ' + (positions || []).length + ' 只';
   }
-  if (!positions.length) {
+  if (!positions || !positions.length) {
     desk.innerHTML = '<div class="table-row"><div class="muted" style="text-align:center;padding:20px;grid-column:1/-1">暂无持仓 — 点击右上角「同步持仓」</div></div>';
-    mob.innerHTML = '<div style="text-align:center;color:var(--text-tertiary);padding:20px">暂无持仓 — 同步你的真实持仓</div>';
     return;
   }
-  const ratioText = (p) => {
-    const r = (p.assets_ratio == null ? p.position_ratio : p.assets_ratio) || 0;
-    return (r * 100).toFixed(2) + '%';
-  };
-  const ratioBar = (p, wpx) => {
-    const r = Math.max(0, Math.min(1, (p.assets_ratio == null ? p.position_ratio : p.assets_ratio) || 0));
-    const bw = Math.max(3, Math.round(r * 100));
-    return '<div class="position-bar" style="display:inline-block;width:' + wpx + 'px;vertical-align:middle"><div class="position-fill" style="width:' + bw + '%"></div></div>';
-  };
-  desk.innerHTML = positions.map(p => {
-    const up = (p.pnl || 0) >= 0;
-    const priceUp = (p.price != null && p.cost_price != null && p.price >= p.cost_price);
-    return '<div class="table-row" data-code="' + esc(p.stock_code) + '" style="cursor:pointer">' +
-      '<div class="stock-cell"><span class="stock-name">' + esc(p.stock_name || p.stock_code) + '</span><span class="stock-code">' + esc(p.stock_code) + '</span></div>' +
-      '<div class="price-cell ' + (priceUp ? 'up' : 'down') + ' num" style="text-align:right">' + fmt(p.price) + '</div>' +
-      '<div class="muted num" style="text-align:right">' + (p.hold_qty || 0) + ' / ' + (p.available_qty || 0) + '</div>' +
-      '<div class="muted num" style="text-align:right">' + fmt(p.cost_price) + '</div>' +
-      '<div class="price-cell ' + (up ? 'up' : 'down') + ' num" style="text-align:right">' + sign(p.pnl) + '</div>' +
-      '<div style="text-align:right;white-space:nowrap">' + ratioBar(p, 56) +
-        '<span class="num" style="font-size:11px;margin-left:6px;color:var(--text-secondary)">' + ratioText(p) + '</span></div>' +
-      '</div>';
-  }).join('');
-  mob.innerHTML = positions.map(p => {
-    const up = (p.pnl || 0) >= 0;
-    const priceUp = (p.price != null && p.cost_price != null && p.price >= p.cost_price);
-    return '<div class="holding-row" data-code="' + esc(p.stock_code) + '" style="margin-bottom:8px;cursor:pointer">' +
-      '<div class="holding-left"><div class="stock-tag">' + esc((p.stock_name || p.stock_code).charAt(0)) + '</div>' +
-      '<div class="holding-info"><div class="name">' + esc(p.stock_name || p.stock_code) + ' <span class="ai-pill">AI</span></div>' +
-      '<div class="code">' + esc(p.stock_code) + ' · ' + (p.hold_qty || 0) + '/' + (p.available_qty || 0) + '</div></div></div>' +
-      '<div class="holding-right">' +
-      '<div class="price ' + (priceUp ? 'up' : 'down') + ' num">' + fmt(p.price) + '</div>' +
-      '<div class="pnl ' + (up ? 'up' : 'down') + ' num">' + sign(p.pnl) + ' · ' + fmt((p.pnl_pct || 0) * 100) + '%</div>' +
-      '<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:5px">' + ratioBar(p, 40) +
-        '<span class="num" style="font-size:10px;color:var(--text-tertiary)">占资产 ' + ratioText(p) + '</span></div>' +
-      '</div>' +
-      '</div>';
-  }).join('');
+  paintHoldings('home', desk, positions);
 }
 
 async function loadTrust() {
@@ -4329,50 +4594,30 @@ function renderTrustOverview(data, assets, cash, mv, pnl) {
   if (daySub) daySub.textContent = created ? (hasDay ? '托管簿当日' : '暂无昨收') : '—';
   const empty = document.getElementById('trust-pos-empty');
   const desk = document.getElementById('trust-desk-rows');
-  const mob = document.getElementById('trust-mob-rows');
   const countSub = document.getElementById('trust-count-sub');
   if (!desk || !empty) return;
   const pos = data.positions || [];
   if (!data.book_created || !pos.length) {
     desk.innerHTML = '';
-    if (mob) mob.innerHTML = '';
     empty.style.display = 'block';
     if (countSub) countSub.textContent = '0 只';
     return;
   }
   empty.style.display = 'none';
   if (countSub) countSub.textContent = pos.length + ' 只';
-  const ratioOf = (p) => { const r = (p.assets_ratio == null ? p.position_ratio : p.assets_ratio) || 0; return Math.max(0, Math.min(1, r)); };
-  const pct = (p) => (ratioOf(p) * 100).toFixed(2) + '%';
-  const bar = (p, wpx) => '<div class="position-bar" style="display:inline-block;width:' + wpx + 'px;vertical-align:middle"><div class="position-fill" style="width:' + Math.max(3, Math.round(ratioOf(p) * 100)) + '%"></div></div>';
-  desk.innerHTML = pos.map(p => {
-    const up = (p.pnl || 0) >= 0;
-    const priceUp = (p.price != null && p.cost_price != null && p.price >= p.cost_price);
-    return '<div class="table-row" data-code="' + esc(p.stock_code) + '" style="cursor:pointer">' +
-      '<div class="stock-cell"><span class="stock-name">' + esc(p.stock_name || p.stock_code) + '</span><span class="stock-code">' + esc(p.stock_code) + '</span></div>' +
-      '<div class="price-cell ' + (priceUp ? 'up' : 'down') + ' num" style="text-align:right">' + fmt(p.price) + '</div>' +
-      '<div class="muted num" style="text-align:right">' + (p.hold_qty || 0) + ' / ' + (p.available_qty || 0) + '</div>' +
-      '<div class="muted num" style="text-align:right">' + fmt(p.cost_price) + '</div>' +
-      '<div class="price-cell ' + (up ? 'up' : 'down') + ' num" style="text-align:right">' + sign(p.pnl) + '</div>' +
-      '<div style="text-align:right;white-space:nowrap">' + bar(p, 56) +
-        '<span class="num" style="font-size:11px;margin-left:6px;color:var(--text-secondary)">' + pct(p) + '</span></div>' +
-      '</div>';
-  }).join('');
-  if (mob) mob.innerHTML = pos.map(p => {
-    const up = (p.pnl || 0) >= 0;
-    const priceUp = (p.price != null && p.cost_price != null && p.price >= p.cost_price);
-    return '<div class="holding-row" data-code="' + esc(p.stock_code) + '" style="margin-bottom:8px;cursor:pointer">' +
-      '<div class="holding-left"><div class="stock-tag">' + esc((p.stock_name || p.stock_code).charAt(0)) + '</div>' +
-      '<div class="holding-info"><div class="name">' + esc(p.stock_name || p.stock_code) + ' <span class="ai-pill">托管</span></div>' +
-      '<div class="code">' + esc(p.stock_code) + ' · ' + (p.hold_qty || 0) + '/' + (p.available_qty || 0) + ' 股 · 成本 ' + fmt(p.cost_price) + '</div></div></div>' +
-      '<div class="holding-right">' +
-      '<div class="price ' + (priceUp ? 'up' : 'down') + ' num">' + fmt(p.price) + '</div>' +
-      '<div class="pnl ' + (up ? 'up' : 'down') + ' num">' + sign(p.pnl) + ' · ' + fmt((p.pnl_pct || 0) * 100) + '%</div>' +
-      '<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:5px">' + bar(p, 40) +
-        '<span class="num" style="font-size:10px;color:var(--text-tertiary)">占资产 ' + pct(p) + '</span></div>' +
-      '</div>' +
-      '</div>';
-  }).join('');
+  renderTrustHoldings(pos);
+}
+
+/* 托管持仓：两个入口共用 paintHoldings，排序与首页同一套实现 */
+function renderTrustHoldings(pos) {
+  const desk = document.getElementById('trust-desk-rows');
+  LIST_CACHE.trust = pos || [];
+  if (!desk) return;
+  if (!pos || !pos.length) {
+    desk.innerHTML = '';
+    return;
+  }
+  paintHoldings('trust', desk, pos);
 }
 
 /* 次日行动计划卡片：只显示思路/风险摘要（逐条监控条件在「监控条件」卡片里，避免两处重复） */
@@ -4495,11 +4740,11 @@ function monitorRowsHtml(payload) {
       + (n > 1 && idx < n ? ' tier-open' : '');   // 组内虚线分隔，组末恢复实线
     return '<div class="' + rowCls + '">' +
       stockCell +
-      '<div class="monitor-date" style="text-align:center">' + esc((!cont && mdate) || '—') + '</div>' +
+      '<div class="monitor-date">' + esc((!cont && mdate) || '—') + '</div>' +
       '<div class="monitor-cond"><span class="plan-trigger">' + esc(cond) + '</span> ' + tw + '</div>' +
-      '<div style="text-align:center"><span class="tag ' + cls + '">' + act + '</span></div>' +
-      '<div class="monitor-price ' + updown + '" style="text-align:right">' + price + '</div>' +
-      '<div class="monitor-status" style="text-align:center">' + status + '</div>' +
+      '<div><span class="tag ' + cls + '">' + act + '</span></div>' +
+      '<div class="monitor-price ' + updown + '">' + price + '</div>' +
+      '<div class="monitor-status">' + status + '</div>' +
       '</div>';
   }).join('');
 }
@@ -4953,7 +5198,19 @@ async function loadTrades() {
     // 移除旧的 trade-row（保留 trades-header）
     container.querySelectorAll('.trade-row').forEach(el => el.remove());
     trades.slice(0, 10).forEach(t => container.appendChild(tradeRowEl(t)));
+    // 表头那句计数**交给这里写**：以前是写死的「12 笔」，跟真实笔数没关系。
+    // 只改这一个 span 的文本，不动 trades-header 的结构（上面那句注释就是讲这个约定）。
+    const cnt = document.getElementById('trust-trades-count');
+    if (cnt) cnt.textContent = 'AI 调仓记录 · ' + trades.length + ' 笔';
   } catch (e) { console.error(e); }
+}
+
+/* 「查看全部 ›」：切到托管页已有的「委托成交」子 Tab。
+   复用那个 Tab 既有的点击处理器（它自己会切面板 + loadOrders + loadTrades），
+   **不另写一套列表** —— 否则两处会慢慢长歪。 */
+function openTrustRecords() {
+  const tab = document.querySelector('.trust-tab[data-trust-tab="records"]');
+  if (tab) tab.click();
 }
 
 /* ========== 同步持仓（镜像簿）========== */
@@ -5802,11 +6059,11 @@ function renderWlList(items) {
   // 参考首页「我的持仓」：表头常显 + 数据行（股票｜最新价｜涨跌幅｜涨跌额｜操作）
   const head =
     '<div class="table-row head">' +
-      '<div>股票</div>' +
-      '<div style="text-align:right">最新价</div>' +
-      '<div style="text-align:right">涨跌幅</div>' +
-      '<div style="text-align:right">涨跌额</div>' +
-      '<div style="text-align:right">操作</div>' +
+      '<div class="sortable" data-sort="name" data-list="watchlist">股票' + caretOf('watchlist', 'name') + '</div>' +
+      '<div class="sortable" data-sort="price" data-list="watchlist">最新价' + caretOf('watchlist', 'price') + '</div>' +
+      '<div class="sortable" data-sort="change_pct" data-list="watchlist">涨跌幅' + caretOf('watchlist', 'change_pct') + '</div>' +
+      '<div class="sortable" data-sort="change" data-list="watchlist">涨跌额' + caretOf('watchlist', 'change') + '</div>' +
+      '<div>操作</div>' +
     '</div>';
   if (!items.length) {
     list.innerHTML = head +
@@ -5814,7 +6071,9 @@ function renderWlList(items) {
       '<br><span style="font-size:12px">上方输入代码/名称检索加入；或「粘贴 / 截图同步自选」整组导入</span></div></div>';
     return;
   }
-  list.innerHTML = head + items.map(w => {
+  LIST_CACHE.watchlist = items || [];
+  const wlRows = sortRows(items, 'watchlist', WL_GETTERS);
+  list.innerHTML = head + wlRows.map(w => {
     const hasChg = (w.change != null) && (w.change_pct != null);
     const col = !hasChg ? 'var(--text-secondary)'
       : (w.change > 0 ? 'var(--accent-up)' : (w.change < 0 ? 'var(--accent-down)' : 'var(--text-secondary)'));
@@ -5824,10 +6083,10 @@ function renderWlList(items) {
     return '<div class="table-row" data-code="' + esc(w.stock_code) + '" style="cursor:pointer">' +
       '<div class="stock-cell"><span class="stock-name">' + esc(w.stock_name || w.stock_code) + '</span>' +
         '<span class="stock-code">' + esc(w.stock_code) + '</span></div>' +
-      '<div class="price-cell num" style="text-align:right;color:' + col + '">' + price + '</div>' +
-      '<div class="num" style="text-align:right;color:' + col + '">' + pct + '</div>' +
-      '<div class="num" style="text-align:right;color:' + col + '">' + chg + '</div>' +
-      '<div style="text-align:right"><span class="wl-rm" title="从本组移出">移出</span></div>' +
+      '<div class="price-cell num" style="color:' + col + '">' + price + '</div>' +
+      '<div class="num" style="color:' + col + '">' + pct + '</div>' +
+      '<div class="num" style="color:' + col + '">' + chg + '</div>' +
+      '<div><span class="wl-rm" title="从本组移出">移出</span></div>' +
       '</div>';
   }).join('');
   list.querySelectorAll('.table-row[data-code]').forEach(row => {
@@ -5835,6 +6094,11 @@ function renderWlList(items) {
     const rm = row.querySelector('.wl-rm');
     if (rm) rm.onclick = (e) => { e.stopPropagation(); delWatch(code); };
     row.onclick = () => openStock(code);
+  });
+  // innerHTML 整块重建后必须重绑表头点击（行内事件上面已重绑）
+  list.querySelectorAll('.table-row.head [data-sort]').forEach(el => {
+    el.style.cursor = 'pointer'; el.style.userSelect = 'none';
+    el.onclick = () => { toggleSort('watchlist', el.dataset.sort); rerenderList('watchlist'); };
   });
 }
 async function delWatch(code) {
@@ -6147,11 +6411,13 @@ function bindStockDetailDelegation(containerSel) {
 }
 bindStockDetailDelegation('#view-positions');
 bindStockDetailDelegation('#home-desk-rows');
-bindStockDetailDelegation('#home-mob-rows');
 bindStockDetailDelegation('#trust-desk-rows');
-bindStockDetailDelegation('#trust-mob-rows');
 
 /* ========== 初始化 ========== */
+// 两张持仓表的表头是**静态 HTML**，点击绑定只需做一次（行内事件由各 render 负责重绑）
+bindSortHeads(document.getElementById('home-desk-rows'), 'home');
+bindSortHeads(document.getElementById('trust-desk-rows'), 'trust');
+
 (async function init() {
   if (getToken()) {
     hideLogin();

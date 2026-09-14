@@ -1346,6 +1346,81 @@ def orchestration_section() -> None:
           bool(states_f) and "LLM 账户不可用" in states_f[0][2], str(states_f))
 
 
+    # ---- 己之三：全新起跑必须清掉窗口内**上一轮留下的**计划（R20-1）----
+    # 三件事一起验，缺任何一条这个修法就是错的：
+    #   ① 窗口内 → **必须清**。否则新 run 的第一天命中 `has_plan=True` 走 `_execute_plan`，
+    #      **绕过首日豁免**去执行一份为**另一个账簿**生成的计划（实测 C2/run3 的 09-07 就是
+    #      这样带上了 run5 留下的 19 条动作，成交从 7 笔变 13 笔）。
+    #   ② 窗口外 → **必须留**。那些日期轮不到本 run 生成，是别的 run 报告页的底稿；
+    #      删了就退回 §2.6「计划被别的 run 的生命周期抹掉」那个老 bug。
+    #   ③ 续跑时 → **必须留**。检查点之后那份计划是**本 run 自己**刚生成的，正要拿来执行。
+    fresh_db()
+    sh_g = shadow_id()
+    rid_g = make_run(start_date=DAYS5[0], end_date=DAYS5[-1],
+                     init_mode="cash", init_cash=100000.0)
+
+    def _seed_plan(d: str) -> None:
+        session = db.get_session()
+        try:
+            session.add(db.TrustPlan(
+                user_id=sh_g, trade_date=d,
+                plan_json='{"actions": [{"action": "hold", "code": "600519.SH"}]}',
+                created_at=NOW,
+            ))
+            session.commit()
+        finally:
+            session.close()
+
+    def _plan_dates() -> set[str]:
+        session = db.get_session()
+        try:
+            rows = session.query(db.TrustPlan).filter(db.TrustPlan.user_id == sh_g).all()
+            return {p.trade_date for p in rows}
+        finally:
+            session.close()
+
+    class _NoThread:
+        """不起真 worker：这一段只验 start_run 的**落库动作**（清哪些/留哪些）。"""
+
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            pass
+
+    # 只换 bt 模块看到的那个 threading，不动真正的 threading 模块（那是进程级的）
+    _saved_threading = bt.threading
+    bt.threading = SimpleNamespace(Thread=_NoThread)
+    try:
+        for d in (DAYS5[0], DAYS5[2], DAYS5[-1], "2026-02-01", "2026-04-01"):
+            _seed_plan(d)
+        bt.start_run(rid_g)
+        left = _plan_dates()
+        check("★ 全新起跑：窗口内上一轮留下的计划被清掉（否则首日会拿别人的计划去执行）",
+              not ({DAYS5[0], DAYS5[2], DAYS5[-1]} & left), str(sorted(left)))
+        check("★ 窗口外的计划**一条不动**（那是别的 run 报告页的底稿，删了就退回老 bug）",
+              {"2026-02-01", "2026-04-01"} <= left, str(sorted(left)))
+
+        # 续跑：把检查点写成"可用"（parse_checkpoint 只要求 dict + positions 列表），
+        # 再塞一条窗口内的计划 —— 起跑后它必须还在。
+        session = db.get_session()
+        try:
+            row = session.query(db.BacktestRun).filter(db.BacktestRun.id == rid_g).first()
+            row.checkpoint_json = json.dumps({"cash": 0.0, "positions": []})
+            row.status = "pending"
+            row.worker_token = None
+            session.commit()
+        finally:
+            session.close()
+        _seed_plan(DAYS5[1])
+        bt.start_run(rid_g)
+        left = _plan_dates()
+        check("★ 续跑时窗口内的计划**必须留着**（检查点之后那份是自己生成的，正要拿来执行）",
+              DAYS5[1] in left, str(sorted(left)))
+    finally:
+        bt.threading = _saved_threading
+
+
 # ------------------------------------------------------------- 11. API 层
 
 STRANGER_PHONE = "13900000002"

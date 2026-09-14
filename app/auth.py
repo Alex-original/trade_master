@@ -8,7 +8,7 @@ from __future__ import annotations
 import secrets
 import time
 
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 from app import db, sms
 from app.errors import ServiceError
@@ -121,4 +121,40 @@ def get_current_user(authorization: str = Header(default="")) -> int:
     user_id = get_user_id_by_token(token)
     if not user_id:
         raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+    return user_id
+
+
+def is_admin(user_id: int) -> bool:
+    """这个 user_id 是不是管理员（按 ``config.ADMIN_PHONES`` 白名单比对手机号）。
+
+    **为什么查用户表而不是看 user_id**：建号顺序在不同环境里不一样，写死 id 迟早出事；
+    手机号才是稳定的身份。也因此 ``get_current_user`` 返回的裸 int 不够用，这里必须多查一次库。
+
+    ``config.ADMIN_PHONES`` 是**模块导入时**求值的 —— 测试直接改 ``config.ADMIN_PHONES``
+    即可（与 ``smoke_internal_api.py`` 改 ``config.INTERNAL_TOKEN`` 同一套做法），
+    所以这里**实时读 config** 而不是自己缓存一份，否则测试改了不生效。
+    """
+    from app import config
+
+    if not config.ADMIN_PHONES:
+        return False  # fail-closed：没配 = 谁都不是
+    session = db.get_session()
+    try:
+        u = session.query(db.User).filter(db.User.id == user_id).first()
+        if u is None:
+            return False
+        return (u.phone or "") in config.ADMIN_PHONES
+    finally:
+        session.close()
+
+
+def require_admin(user_id: int = Depends(get_current_user)) -> int:
+    """FastAPI 依赖：在"登录"之上再加一道"准入"。非管理员抛 403。
+
+    与 ``backtest._require_own`` 是两道**不同**的防线，都要有：
+    这道管"你能不能碰回测这个功能"，那道管"这条 run 是不是你的"。少任何一道，
+    要么非管理员能跑回测，要么管理员能读到别人的 run。
+    """
+    if not is_admin(user_id):
+        raise HTTPException(status_code=403, detail="该功能仅管理员可用")
     return user_id

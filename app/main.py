@@ -50,6 +50,9 @@ def _startup() -> None:
         print("[startup] 数据库初始化完成", flush=True)
     except Exception as e:  # noqa: BLE001
         print(f"[startup] 数据库初始化失败（检查 DATABASE_URL / PG 是否就绪）：{e}", flush=True)
+    # 管理员白名单是 fail-closed 的：没配 = 谁都不是 ⇒ 回测功能整体关闭。那会让"忘了配"
+    # 表现成"功能凭空消失"，所以这里把实际生效的数量打出来，排查时一眼看得见。
+    print(f"[startup] 管理员白名单：{len(config.ADMIN_PHONES)} 个手机号", flush=True)
     trust.start_scheduler()
     # 回测动辄数小时，进程重启（发版 / OOM / 手动 kill）后必须能自己接着跑——否则一次
     # 重启就让一条已经烧掉几小时 LLM 的 run 永远卡在 running 上，而用户只会看到进度条不动。
@@ -236,7 +239,11 @@ def api_logout(authorization: str = Header(default="")):
 
 @app.get("/api/account")
 def api_account(user_id: int = Depends(auth.get_current_user)):
-    return account.get_account(user_id)
+    # ``is_admin`` 挂在这里而不是 account.get_account 里：这是**请求级**的身份判断，
+    # 不是账户数据。前端启动时的 Promise.all 里就有这一次调用，所以入口显隐不用多发请求。
+    data = account.get_account(user_id)
+    data["is_admin"] = auth.is_admin(user_id)
+    return data
 
 
 @app.get("/api/positions")
@@ -511,7 +518,7 @@ def api_records(user_id: int = Depends(auth.get_current_user)):
 
 
 @app.post("/api/backtest/run")
-def api_backtest_run(req: BacktestRunRequest, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_run(req: BacktestRunRequest, user_id: int = Depends(auth.require_admin)):
     """发起一次回测：建 run → 立刻起跑（后台线程）→ 返回 run_id 供前端轮询。
 
     **先拿预览再建 run**：预览里已经算好了交易日数与默认标的池，顺带把日期合法性与
@@ -565,16 +572,39 @@ def api_backtest_run(req: BacktestRunRequest, user_id: int = Depends(auth.get_cu
 
 
 @app.get("/api/backtest/list")
-def api_backtest_list(limit: int = 20, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_list(limit: int = 20, user_id: int = Depends(auth.require_admin)):
     """本用户发起过的回测（新的在前）。只给摘要，完整结果走 /result。"""
     return {"runs": backtest.list_runs(user_id, limit=limit)}
+
+
+@app.get("/api/backtest/capability")
+def api_backtest_capability(user_id: int = Depends(auth.require_admin)):
+    """托管团队能力评估报告（静态单页），回测页顶部内嵌它。
+
+    **为什么是接口而不是直接 <iframe src>**：应用用 ``Authorization: Bearer``
+    （token 在 localStorage），而 iframe 发起的是浏览器裸请求、带不上这个头 ⇒ 必然 403。
+    所以前端用带头 fetch 取回文本、写进 ``iframe.srcdoc``。
+
+    **为什么文件在 ``app_frontend/``**：``docs/`` 被 .dockerignore 排除、deploy.sh 也不传它，
+    放进镜像的只有 ``app_frontend/``。``docs/`` 那份是给人看的同一份，
+    ``scripts/smoke_admin_gate.py`` 逐字节比对两者，防止改了文档页而应用内不更新。
+
+    ⚠️ 声明顺序：本路由在 ``/{run_id}`` **之前**（见上方那段注释），否则会被当成 run_id="capability"。
+    """
+    path = STATIC / "capability.html"
+    if not path.exists():  # 缺文件时给出可读的 404，而不是 500
+        raise ServiceError(
+            "能力评估报告尚未随镜像发布（app_frontend/capability.html 不存在）",
+            status_code=404,
+        )
+    return FileResponse(path, media_type="text/html; charset=utf-8")
 
 
 @app.get("/api/backtest/preview")
 def api_backtest_preview(
     start: str = "", end: str = "", probe: bool = False, init_mode: str = "cash",
     bt_scope: int | None = None, bt_groups: str = "",
-    user_id: int = Depends(auth.get_current_user),
+    user_id: int = Depends(auth.require_admin),
 ):
     """发起前预览：交易日数、标的数、预计 LLM 调用次数与耗时、以及告警。
 
@@ -594,33 +624,33 @@ def api_backtest_preview(
 
 
 @app.get("/api/backtest/{run_id}")
-def api_backtest_progress(run_id: int, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_progress(run_id: int, user_id: int = Depends(auth.require_admin)):
     """进度：status / stage / message / done / total。前端轮询这一个口。"""
     return backtest.get_progress(run_id, user_id)
 
 
 @app.post("/api/backtest/{run_id}/cancel")
-def api_backtest_cancel(run_id: int, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_cancel(run_id: int, user_id: int = Depends(auth.require_admin)):
     """取消：只置标志位，跑着的分析收尾后线程自己退出（不硬杀，避免留下半截账务）。"""
     backtest.cancel_run(run_id, user_id)
     return {"ok": True}
 
 
 @app.get("/api/backtest/{run_id}/result")
-def api_backtest_result(run_id: int, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_result(run_id: int, user_id: int = Depends(auth.require_admin)):
     """聚合结果 + 逐日净值 + 声明。没跑完时 ``result`` 为空 dict。"""
     return backtest.get_result(run_id, user_id)
 
 
 @app.get("/api/backtest/{run_id}/trades")
-def api_backtest_trades(run_id: int, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_trades(run_id: int, user_id: int = Depends(auth.require_admin)):
     """逐日成交流水（含 AI 决策理由）。"""
     return backtest.get_trades(run_id, user_id)
 
 
 @app.get("/api/backtest/{run_id}/monitor")
 def api_backtest_monitor(run_id: int, date: str,
-                         user_id: int = Depends(auth.get_current_user)):
+                         user_id: int = Depends(auth.require_admin)):
     """某一天的监控条件（**执行口径**：卖/减看当日最低、买/建看当日最高）。
 
     与实盘那张卡片同一个渲染器、同一份判据，只把"实时价"换成"那天的真实行情"——
@@ -631,14 +661,14 @@ def api_backtest_monitor(run_id: int, date: str,
 
 
 @app.get("/api/backtest/{run_id}/reports")
-def api_backtest_reports(run_id: int, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_reports(run_id: int, user_id: int = Depends(auth.require_admin)):
     """可查看流程报告的日期清单（每个计划生效日一条，含是否真执行过）。"""
     return backtest.list_plan_reports(run_id, user_id)
 
 
 @app.get("/api/backtest/{run_id}/report")
 def api_backtest_report(run_id: int, date: str, inline: bool = False,
-                        user_id: int = Depends(auth.get_current_user)):
+                        user_id: int = Depends(auth.require_admin)):
     """某一天的流程报告（HTML）。回测跨多日、每天一份，故用 ``date`` 选日。
 
     **与实盘「次日行动报告」同一个渲染器**，所以格式逐字一致；只多一条横幅标注
@@ -663,7 +693,7 @@ def api_backtest_report(run_id: int, date: str, inline: bool = False,
 
 
 @app.delete("/api/backtest/{run_id}")
-def api_backtest_delete(run_id: int, user_id: int = Depends(auth.get_current_user)):
+def api_backtest_delete(run_id: int, user_id: int = Depends(auth.require_admin)):
     """删除回测记录。**影子账户留着**——它承载研究缓存（十小时量级的 LLM 调用）。"""
     return backtest.delete_run(run_id, user_id)
 

@@ -93,15 +93,29 @@ def _newer_runs_on_same_shadow(run_id: int, sh: int) -> list[int]:
     判据对**非最新**的 run 已经无从谈起。
 
     所以 A 条只对影子上的最新 run 有判别力：对更早的 run 报失败是把"存储设计"误报成"缺陷"。
+    **判据是"最后活动时间"，不是 id。** 起跑顺序与 id 顺序**不一定一致**：本轮 C6（run 4）
+    就是在 C4（run 5）跑完之后**重跑**的 —— 按 id 会误判成"有更晚的 run"，于是白白跳过 A 条，
+    而那两表明明就是 run 4 自己刚写进去的。改成比 `updated_at`（最后一次写库的时刻）：
+    只有"比我更晚还写过库"的 run 才可能清掉我的 orders/trades。
     """
     session = db.get_session()
     try:
+        me = session.query(db.BacktestRun).filter(db.BacktestRun.id == run_id).first()
+        if me is None:
+            return []
+        mine = float(me.updated_at or me.finished_at or me.created_at or 0.0)
         rows = (
-            session.query(db.BacktestRun.id)
-            .filter(db.BacktestRun.shadow_user_id == sh, db.BacktestRun.id > run_id)
+            session.query(db.BacktestRun.id, db.BacktestRun.updated_at,
+                          db.BacktestRun.finished_at, db.BacktestRun.created_at)
+            .filter(db.BacktestRun.shadow_user_id == sh, db.BacktestRun.id != run_id)
             .all()
         )
-        return [int(x[0]) for x in rows]
+        newer = []
+        for rid, upd, fin, cre in rows:
+            other = float(upd or fin or cre or 0.0)
+            if other > mine:
+                newer.append(int(rid))
+        return newer
     finally:
         session.close()
 
@@ -165,14 +179,20 @@ def main() -> int:  # noqa: C901 —— 验收脚本，线性罗列六条判据
             rep.check("每笔成交都有对应的委托单", not orphan_orders,
                       "；".join(orphan_orders[:5]))
 
-        # step 内部自洽（不依赖两表，故对任何 run 都成立）：成交条数 == trade_count
-        bad_cnt = [
-            f"{s.trade_date}: {len(json.loads(s.trades_json or '[]'))} != {s.trade_count}"
-            for s in steps
-            if len(json.loads(s.trades_json or "[]")) != int(s.trade_count or 0)
-        ]
-        rep.check("step.trade_count 与 trades_json 条数一致", not bad_cnt,
-                  "；".join(bad_cnt[:5]))
+        # step 内部自洽（不依赖 orders/trades 两表，故对**任何** run 都成立，不受 TM-M12-27
+        # 那条「只对影子账户上最新的 run 有效」的排序约束影响）：
+        # 当天的手续费合计必须等于当天各笔成交 fee 之和。
+        # ⚠️ 这里原先写的是 `step.trade_count`，而 BacktestStep **根本没有这个列** ——
+        # 一段从来没被执行过的断言（同步到生产前没人跑过），一跑就 AttributeError。
+        # 换成手续费恒等式：同样是"step 自身自洽"，而且用的是真存在的列。
+        bad_fee = []
+        for s in steps:
+            tj = json.loads(s.trades_json or "[]")
+            fee_sum = round(sum(float(t.get("fee") or 0.0) for t in tj), 2)
+            if abs(fee_sum - float(s.fees or 0.0)) > 0.01:
+                bad_fee.append(f"{s.trade_date}: 列={s.fees} Σ成交={fee_sum}")
+        rep.check("step.fees == 当天各笔成交 fee 之和（step 自身自洽）", not bad_fee,
+                  "；".join(bad_fee[:5]))
 
         pos = session.query(db.Position).filter(
             db.Position.user_id == sh, db.Position.book == 1

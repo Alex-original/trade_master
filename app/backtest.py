@@ -262,6 +262,48 @@ def _materialize_universe(session, shadow_user_id: int, universe: list[dict]) ->
     return n
 
 
+def _clear_shadow_plans_in_window(session, run) -> int:
+    """清掉影子账户**落在本 run 窗口内**的计划行，返回删除条数。**不 commit**，由调用方收尾。
+
+    ## 为什么必须清（R20-1）
+
+    ``trust_plans`` 只按 ``(user_id, trade_date)`` 归属，**没有 run_id** —— 计划没法说清
+    是哪一轮生成的。而影子账户是**刻意跨 run 复用**的，于是"库里那天有计划"就足以让新 run 的
+    **首日豁免失效**：``trust._run_execution`` 看到 ``has_plan`` 就走 ``_execute_plan``，
+    拿的却是**上一轮为另一个账簿生成**的计划（run 5 是空仓起步逐步累计的账，run 3 是复制来的
+    真实持仓）。实测：C2（run 3）的 ``2026-09-07`` 带上的是 run 5 留下的 19 条动作，
+    成交从 7 笔变成 13 笔 —— 一整轮验证的结论就此失真，而结果页上完全看不出来。
+
+    ## 只清窗口内，且只在全新起跑时清
+
+    - **窗口外的一律不动**：那些日期轮不到本 run 生成，是别的 run 报告页的底稿。动了就是回到
+      §2.6 那个"计划被别的 run 的生命周期抹掉"的老 bug。
+    - **续跑时不清**（调用方按检查点判定）：检查点之后那份计划是**本 run 自己**生成的，
+      正要拿来执行，删了就等于把自己续跑的路堵死。
+
+    ## 与 `reset_shadow_book(plans=False)` 的分工
+
+    后者解决"**别的 run 开始**不该抹掉我的计划"（历史记录要留着）；本函数解决
+    "**我开始**不该吃别人的计划"（执行不能张冠李戴）。一条讲保存，一条讲归属，
+    在 `trust_plans` 有 `run_id` 之前，这两条缺一不可。
+    """
+    sh = int(getattr(run, "shadow_user_id", 0) or 0)
+    if not sh or not run.start_date or not run.end_date:
+        return 0
+    rows = (
+        session.query(db.TrustPlan)
+        .filter(
+            db.TrustPlan.user_id == sh,
+            db.TrustPlan.trade_date >= run.start_date,
+            db.TrustPlan.trade_date <= run.end_date,
+        )
+        .all()
+    )
+    for row in rows:
+        session.delete(row)
+    return len(rows)
+
+
 def reset_shadow_book(session, shadow_user_id: int) -> dict:
     """把影子账户的账务重置到干净态：委托 / 成交 / 托管簿持仓全清，现金归零。
 
@@ -729,6 +771,18 @@ def start_run(run_id: int, *, fresh_research: bool = False) -> bool:
             session.query(db.EngineRun).filter(
                 db.EngineRun.user_id == int(run.shadow_user_id)
             ).delete(synchronize_session=False)
+
+        # 全新起跑前，清掉影子在本 run 窗口内的计划（R20-1）。**续跑绝不走这一步**：
+        # 检查点之后那份计划是本 run 自己生成的、正要拿来执行；而全新起跑时窗口内不可能
+        # 有本 run 的计划，清掉的只可能是上一轮留下的——那份计划会顶掉首日豁免，
+        # 让"首日结构性不可执行"变成"首日执行别人的计划"。
+        if not _checkpoint_usable({"checkpoint_json": run.checkpoint_json}):
+            n_stale = _clear_shadow_plans_in_window(session, run)
+            if n_stale:
+                logger.info(
+                    "回测 %s 全新起跑：清掉窗口 [%s, %s] 内上一轮留下的 %d 条计划",
+                    run_id, run.start_date, run.end_date, n_stale,
+                )
 
         run.worker_token = token
         run.status = "running"

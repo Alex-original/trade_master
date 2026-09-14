@@ -34,6 +34,15 @@ MARKET_CACHE_PATH = Path(
 # 公网另有 nginx ``location ^~ /api/internal/`` 直接 404（只留回环可达），这里是第二道。
 INTERNAL_TOKEN = os.getenv("TRADE_MASTER_INTERNAL_TOKEN", "")
 
+# ---- 管理员白名单（手机号，逗号分隔）----
+# 目前只有一个用途：**历史回测只对管理员开放**。与 INTERNAL_TOKEN 同样是 **fail-closed** ——
+# 没配就是"谁都不是管理员"，于是回测功能整体关闭（而不是"没配就人人可用"）。
+# 代价是"忘了配"会表现成"功能凭空消失"，所以 app.main 启动时会打一行日志说明配了几个。
+# 写成手机号而不是 user_id：建号顺序在不同环境里不一样，手机号是唯一稳定的身份。
+ADMIN_PHONES = frozenset(
+    p.strip() for p in os.getenv("ADMIN_PHONES", "").split(",") if p.strip()
+)
+
 
 def ensure_dirs() -> None:
     """确保数据目录存在。"""
